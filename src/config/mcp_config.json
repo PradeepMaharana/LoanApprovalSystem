@@ -1,0 +1,58 @@
+{
+  "mcpServers": {
+    "ApplicantDB": {
+      "command": "node",
+      "args": ["mcp_servers/applicant_db_server.js"],
+      "description": "MCP MySQL Server for Applicant Data Management",
+      "env": {
+        "MYSQL_HOST": "localhost",
+        "MYSQL_PORT": "3306",
+        "MYSQL_USER": "root",
+        "MYSQL_PASSWORD": "Tek@12345",
+        "MYSQL_DATABASE": "loan_approval_system",
+        "LOG_LEVEL": "info"
+      }
+    },
+    "RiskRulesDB": {
+      "command": "node",
+      "args": ["mcp_servers/risk_rules_server.js"],
+      "description": "MCP MySQL Server for Risk Assessment Rules and Algorithms",
+      "env": {
+        "MYSQL_HOST": "localhost",
+        "MYSQL_PORT": "3306",
+        "MYSQL_USER": "root",
+        "MYSQL_PASSWORD": "Tek@12345",
+        "MYSQL_DATABASE": "loan_approval_system",
+        "LOG_LEVEL": "info"
+      }
+    },
+    "DecisionSynthesis": {
+      "command": "node",
+      "args": ["mcp_servers/decision_synthesis_server.js"],
+      "description": "MCP MySQL Server for Loan Decision Synthesis and Logic",
+      "env": {
+        "MYSQL_HOST": "localhost",
+        "MYSQL_PORT": "3306",
+        "MYSQL_USER": "root",
+        "MYSQL_PASSWORD": "Tek@12345",
+        "MYSQL_DATABASE": "loan_approval_system",
+        "LOG_LEVEL": "info"
+      }
+    },
+    "NotificationSystem": {
+      "command": "node",
+      "args": ["mcp_servers/notification_system_server.js"],
+      "description": "MCP MySQL Server for Application Notifications and Alerts",
+      "env": {
+        "MYSQL_HOST": "localhost",
+        "MYSQL_PORT": "3306",
+        "MYSQL_USER": "root",
+        "MYSQL_PASSWORD": "Tek@12345",
+        "MYSQL_DATABASE": "loan_approval_system",
+        "LOG_LEVEL": "info"
+      }
+    }
+  },
+  "version": "1.0.0",
+  "timestamp": "2024-07-01"
+}
