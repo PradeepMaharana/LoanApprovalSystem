@@ -87,6 +87,28 @@ def submit_to_orchestrator(applicant_id: str) -> Dict[str, Any]:
         return {"error": f"Error: {str(e)}"}
 
 
+def get_agent_analysis(applicant_id: str) -> Dict[str, Any]:
+    """Get comprehensive agent analysis from orchestrator"""
+    try:
+        api_url = "http://localhost:8000"
+        response = requests.get(
+            f"{api_url}/api/v1/analyze/{applicant_id}",
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            return response.json()
+        else:
+            return {"status": "error", "error": f"API error: {response.status_code}"}
+
+    except requests.Timeout:
+        return {"status": "error", "error": "Analysis timeout"}
+    except requests.ConnectionError:
+        return {"status": "error", "error": "Failed to connect to API"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 def get_processing_status(applicant_id: str) -> Dict[str, Any]:
     """Get processing status from API"""
     try:
@@ -309,7 +331,7 @@ def render_chat_interface():
             st.write(user_input)
 
         # Process request
-        with st.spinner("🔄 Processing..."):
+        with st.spinner("🔄 Analyzing applicant with all agents..."):
             # Parse input
             if user_input.startswith("APP-"):
                 applicant_id = user_input
@@ -322,14 +344,12 @@ def render_chat_interface():
 
             st.session_state.applicant_id = applicant_id
 
-            # Submit to orchestrator
-            result = submit_to_orchestrator(applicant_id)
+            # Get comprehensive agent analysis
+            analysis = get_agent_analysis(applicant_id)
 
-            if "error" not in result:
-                st.session_state.processing_result = result
-
-                # Format response
-                response_text = format_processing_result(result)
+            if analysis.get("status") == "success":
+                st.session_state.processing_result = analysis
+                response_text = f"✅ **Analysis Complete for {applicant_id}**\n\nComprehensive agent analysis with Income Stability, Employment Risk, Financial Metrics, and Loan Decision displayed below."
                 add_message("assistant", response_text)
 
                 with st.chat_message("assistant"):
@@ -337,16 +357,91 @@ def render_chat_interface():
 
                 # Show raw JSON if enabled
                 if st.session_state.get("show_raw_json"):
-                    with st.expander("📋 Raw Response JSON"):
-                        st.json(result)
+                    with st.expander("📋 Raw Analysis JSON"):
+                        st.json(analysis)
 
             else:
-                error_message = f"❌ Error: {result['error']}"
+                error_message = f"❌ Error: {analysis.get('error', 'Unknown error')}"
                 add_message("assistant", error_message)
                 with st.chat_message("assistant"):
                     st.error(error_message)
 
         st.rerun()
+
+
+def render_agent_analysis_panel(analysis: Dict[str, Any]):
+    """Render comprehensive agent analysis"""
+    if analysis.get("status") != "success":
+        st.error(f"❌ Analysis Error: {analysis.get('error', 'Unknown error')}")
+        return
+
+    # Decision Summary
+    decision = analysis.get("decision", {})
+    st.subheader("🎯 Loan Decision")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Classification", decision.get("classification", "N/A"))
+    with col2:
+        st.metric("Risk Score", f"{decision.get('risk_score', 'N/A')}/100")
+    with col3:
+        st.metric("Confidence", f"{decision.get('confidence_level', 'N/A')}%")
+    with col4:
+        st.metric("Applicant ID", analysis.get("applicant_id", "N/A")[:15])
+
+    st.markdown(f"**Explanation:** {decision.get('explanation', 'N/A')}")
+
+    # Applicant Profile Analysis
+    st.subheader("📋 Applicant Profile")
+    profile = analysis.get("applicant_profile", {})
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Income Stability Score", f"{profile.get('income_stability_score', 'N/A')}/100")
+    with col2:
+        st.metric("Employment Risk Score", f"{profile.get('employment_risk_score', 'N/A')}/100")
+    with col3:
+        st.metric("Credit Score", profile.get("credit_score", "N/A"))
+
+    profile_details = f"""
+    - **Credit Category**: {profile.get('credit_category', 'N/A')}
+    - **Employment Type**: {profile.get('employment_type', 'N/A')}
+    - **Age**: {profile.get('age', 'N/A')} years
+    - **Income**: ${profile.get('income', 'N/A'):,.2f}
+    - **Location**: {profile.get('location', 'N/A')}
+    """
+    st.markdown(profile_details)
+
+    # Financial Analysis
+    st.subheader("💰 Financial Analysis")
+    financial = analysis.get("financial_analysis", {})
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("DTI Ratio", f"{financial.get('dti_ratio', 'N/A'):.3f}")
+    with col2:
+        st.metric("LTI Ratio", f"{financial.get('lti_ratio', 'N/A'):.3f}")
+    with col3:
+        st.metric("DTI %", f"{financial.get('debt_to_income_percentage', 'N/A'):.1f}%")
+    with col4:
+        st.metric("LTI %", f"{financial.get('loan_to_income_percentage', 'N/A'):.1f}%")
+
+    st.markdown(f"**Monthly Payment**: ${financial.get('monthly_payment_estimate', 'N/A'):,.2f}")
+
+    # Decision Factors & Recommendations
+    st.subheader("📊 Decision Details")
+
+    factors = decision.get("key_factors", {})
+    if factors:
+        st.write("**Key Decision Factors:**")
+        factors_md = "\n".join([f"- **{k}**: {v}" for k, v in factors.items()])
+        st.markdown(factors_md)
+
+    actions = decision.get("recommended_actions", [])
+    if actions:
+        st.write("**Recommended Actions:**")
+        for action in actions:
+            st.write(f"• {action}")
 
 
 def render_results_panel():
@@ -431,14 +526,77 @@ def main():
     render_header()
     render_sidebar()
 
-    # Main content
-    col_chat, col_results = st.columns([2, 2])
+    # Main content - full width for agent analysis
+    render_chat_interface()
 
-    with col_chat:
-        render_chat_interface()
+    # Agent Analysis Results (full width below chat)
+    if st.session_state.processing_result:
+        st.divider()
+        st.header("🤖 Agent Analysis Results")
 
-    with col_results:
-        render_results_panel()
+        analysis_tabs = st.tabs([
+            "Decision",
+            "Applicant Profile",
+            "Financial Analysis",
+            "Summary"
+        ])
+
+        result = st.session_state.processing_result
+
+        with analysis_tabs[0]:
+            decision = result.get("decision", {})
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Classification", decision.get("classification", "N/A"))
+            with col2:
+                st.metric("Risk Score", f"{decision.get('risk_score', 'N/A')}/100")
+            with col3:
+                st.metric("Confidence", f"{decision.get('confidence_level', 'N/A')}%")
+
+            st.markdown(f"**Explanation:** {decision.get('explanation', 'N/A')}")
+            if decision.get("key_factors"):
+                st.write("**Decision Factors:**")
+                for k, v in decision["key_factors"].items():
+                    st.write(f"- **{k}**: {v}")
+
+        with analysis_tabs[1]:
+            profile = result.get("applicant_profile", {})
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Income Stability", f"{profile.get('income_stability_score', 'N/A')}/100")
+            with col2:
+                st.metric("Employment Risk", f"{profile.get('employment_risk_score', 'N/A')}/100")
+            with col3:
+                st.metric("Credit Score", profile.get("credit_score", "N/A"))
+
+            st.markdown(f"""
+            - **Credit Category**: {profile.get('credit_category', 'N/A')}
+            - **Employment**: {profile.get('employment_type', 'N/A')}
+            - **Age**: {profile.get('age', 'N/A')} years
+            - **Income**: ${profile.get('income', 0):,.2f}
+            - **Location**: {profile.get('location', 'N/A')}
+            """)
+
+        with analysis_tabs[2]:
+            financial = result.get("financial_analysis", {})
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("DTI Ratio", f"{financial.get('dti_ratio', 'N/A'):.3f}")
+                st.metric("DTI %", f"{financial.get('debt_to_income_percentage', 'N/A'):.1f}%")
+            with col2:
+                st.metric("LTI Ratio", f"{financial.get('lti_ratio', 'N/A'):.3f}")
+                st.metric("LTI %", f"{financial.get('loan_to_income_percentage', 'N/A'):.1f}%")
+
+            st.markdown(f"**Est. Monthly Payment**: ${financial.get('monthly_payment_estimate', 'N/A'):,.2f}")
+
+        with analysis_tabs[3]:
+            col1, col2 = st.columns(2)
+            with col1:
+                st.subheader("📊 Key Metrics")
+                st.json(result.get("decision", {}))
+            with col2:
+                st.subheader("Full Analysis")
+                st.json(result)
 
 
 if __name__ == "__main__":

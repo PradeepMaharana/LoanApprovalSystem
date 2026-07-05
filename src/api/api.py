@@ -11,6 +11,7 @@ from pathlib import Path
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from database.db_service import get_db_service
+from api.agent_coordinator import AgentCoordinator
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -246,27 +247,42 @@ def get_risk_level(risk_score: float) -> str:
 
 # Database service
 db_service = None
+agent_coordinator = None
 application_counter = 0
 
 
 @app.on_event("startup")
 async def startup_event():
     """Initialize database connection on startup"""
-    global db_service
+    global db_service, agent_coordinator
     try:
         db_service = get_db_service()
         logger.info("✅ Database service initialized")
+
+        # Initialize agent coordinator
+        agent_coordinator = AgentCoordinator(db_config={
+            'host': 'localhost',
+            'user': 'root',
+            'password': '',
+            'database': 'loan_approval_system',
+            'port': 3306
+        })
+        if agent_coordinator.connect_database():
+            logger.info("✅ Agent Coordinator initialized")
     except Exception as e:
-        logger.error(f"❌ Failed to initialize database: {e}")
+        logger.error(f"❌ Failed to initialize services: {e}")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Close database connection on shutdown"""
-    global db_service
+    global db_service, agent_coordinator
     if db_service:
         db_service.disconnect()
         logger.info("✅ Database connection closed")
+    if agent_coordinator:
+        agent_coordinator.disconnect_database()
+        logger.info("✅ Agent Coordinator disconnected")
 
 
 # API Routes
@@ -779,6 +795,54 @@ def generate_chat_response(user_message: str, app_context: Optional[dict] = None
         context_str = f" I see you've applied for ${app_context['loan_amount']:,.0f} with a credit score of {app_context['risk_assessment']['risk_score']:.0f}/100."
 
     return f"Thank you for your inquiry!{context_str} How else can I help you with your loan application today?"
+
+
+# Agent Analysis Endpoint
+@app.get(
+    "/api/v1/analyze/{applicant_id}",
+    tags=["Agent Analysis"],
+    summary="Get Comprehensive Agent Analysis for Applicant"
+)
+async def analyze_applicant(applicant_id: str):
+    """
+    Trigger comprehensive agent analysis for an applicant.
+
+    Orchestrates all agents (ApplicantProfileAgent, FinancialRiskAgent, LoanDecisionAgent)
+    to fetch contextual data, perform analysis, and synthesize a final decision.
+
+    Returns:
+    - Applicant profile analysis (Income Stability, Employment Risk)
+    - Financial risk analysis (DTI, LTI ratios)
+    - Loan decision (Classification, Risk Score, Confidence, Factors)
+    - Synthesized recommendation
+    """
+    global agent_coordinator
+
+    if not agent_coordinator:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent Coordinator not initialized"
+        )
+
+    try:
+        synthesized_response = agent_coordinator.coordinate_agent_analysis(applicant_id)
+
+        if synthesized_response.get("status") != "success":
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=synthesized_response.get("error", "Analysis failed")
+            )
+
+        # Convert to chatbot-friendly format
+        chatbot_response = agent_coordinator.to_chatbot_format(synthesized_response)
+        return chatbot_response
+
+    except Exception as e:
+        logger.error(f"❌ Analysis error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Analysis failed: {str(e)}"
+        )
 
 
 # Error Handlers
