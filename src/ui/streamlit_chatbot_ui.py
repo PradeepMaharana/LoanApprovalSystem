@@ -84,82 +84,153 @@ def get_agent_analysis(applicant_id: str) -> Dict[str, Any]:
 
 
 def display_applicant_profile(profile: Dict[str, Any]):
-    """Display applicant profile information"""
-    st.subheader("👤 Applicant Profile")
+    """Display applicant profile information from ApplicantProfileAgent"""
+    st.subheader("👤 Applicant Profile Analysis")
 
-    col1, col2, col3 = st.columns(3)
+    # Key Stability Metrics (From ApplicantProfileAgent)
+    st.markdown("**📊 Agent Analysis Metrics:**")
+    col1, col2 = st.columns(2)
 
     with col1:
-        st.metric("Income Stability Score", f"{profile.get('income_stability_score', 'N/A')}/100")
-        st.metric("Age", f"{profile.get('age', 'N/A')} years")
-        st.metric("Income", f"${profile.get('income', 0):,.0f}")
+        income_stability = profile.get('income_stability_score', 0)
+        # Color code based on score
+        if income_stability >= 80:
+            st.success(f"✅ Income Stability Score: {income_stability}/100 (Stable)")
+        elif income_stability >= 60:
+            st.info(f"ℹ️ Income Stability Score: {income_stability}/100 (Moderate)")
+        else:
+            st.warning(f"⚠️ Income Stability Score: {income_stability}/100 (Low)")
 
     with col2:
-        st.metric("Employment Risk Score", f"{profile.get('employment_risk_score', 'N/A')}/100")
-        st.metric("Credit Score", profile.get('credit_score', 'N/A'))
-        st.metric("Credit Category", profile.get('credit_category', 'N/A'))
+        employment_risk = profile.get('employment_risk_score', 0)
+        # Color code based on score (inverted - lower is better)
+        if employment_risk <= 30:
+            st.success(f"✅ Employment Risk Score: {employment_risk}/100 (Low Risk)")
+        elif employment_risk <= 70:
+            st.info(f"ℹ️ Employment Risk Score: {employment_risk}/100 (Moderate Risk)")
+        else:
+            st.warning(f"⚠️ Employment Risk Score: {employment_risk}/100 (High Risk)")
 
-    with col3:
-        st.metric("Employment Type", profile.get('employment_type', 'N/A'))
-        st.metric("Location", profile.get('location', 'N/A'))
+    # Detailed Profile Information
+    st.markdown("**📋 Applicant Details:**")
+    col_p1, col_p2, col_p3 = st.columns(3)
+
+    with col_p1:
+        st.write(f"**Age**: {profile.get('age', 'N/A')} years")
+        st.write(f"**Income**: ${profile.get('income', 0):,.0f}/year")
+        st.write(f"**Employment**: {profile.get('employment_type', 'N/A')}")
+
+    with col_p2:
+        st.write(f"**Credit Score**: {profile.get('credit_score', 'N/A')}")
+        st.write(f"**Credit Category**: {profile.get('credit_category', 'N/A')}")
+        st.write(f"**Location**: {profile.get('location', 'N/A')}")
+
+    with col_p3:
+        st.write(f"**Application Status**: {profile.get('application_status', 'N/A')}")
+        st.write(f"**Loan Amount**: ${profile.get('loan_amount', 0):,.0f}")
 
     st.divider()
 
 
 def display_loan_decision(decision: Dict[str, Any]):
-    """Display loan decision details"""
-    st.subheader("🎯 Loan Decision")
+    """Display loan decision details from LoanDecisionAgent"""
+    st.subheader("🎯 Loan Decision Agent Analysis")
 
-    # Decision Classification Banner
+    # Decision Classification Banner (from LoanDecisionAgent)
     classification = decision.get('classification', 'N/A')
     if classification == 'APPROVE':
-        st.success(f"✅ **DECISION: {classification}**")
+        st.success(f"✅ **DECISION: {classification}**", icon="✅")
     elif classification == 'REJECT':
-        st.error(f"❌ **DECISION: {classification}**")
+        st.error(f"❌ **DECISION: {classification}**", icon="❌")
     else:
-        st.warning(f"⏳ **DECISION: {classification}**")
+        st.warning(f"⏳ **DECISION: {classification}**", icon="⏳")
 
-    # Key Metrics
+    # Key Decision Metrics (from LoanDecisionAgent)
+    st.markdown("**📊 Decision Metrics from LoanDecisionAgent:**")
     col1, col2, col3 = st.columns(3)
 
     with col1:
-        st.metric("Risk Score", f"{decision.get('risk_score', 'N/A')}/100")
+        risk_score = decision.get('risk_score', 0)
+        st.metric(
+            "Risk Score",
+            f"{risk_score}/100",
+            delta=f"{'✅ Low' if risk_score >= 75 else '⚠️ Moderate' if risk_score >= 40 else '❌ High'}",
+            help="Overall risk assessment (0-100, higher is better)"
+        )
 
     with col2:
-        st.metric("Confidence Level", f"{decision.get('confidence_level', 'N/A')}%")
+        confidence = decision.get('confidence_level', 0)
+        st.metric(
+            "Confidence Level",
+            f"{confidence}%",
+            delta=f"{'Very High' if confidence >= 90 else 'High' if confidence >= 75 else 'Moderate' if confidence >= 50 else 'Low'}",
+            help="Confidence in the decision (0-100%)"
+        )
 
     with col3:
-        st.metric("Application Status", "Analyzed")
+        st.metric(
+            "Classification",
+            classification,
+            help=f"Final decision: {classification}"
+        )
 
-    # Explanation
-    st.markdown(f"**📝 Explanation:** {decision.get('explanation', 'No explanation available')}")
+    # Detailed Explanation (from LoanDecisionAgent)
+    st.markdown("**📝 Decision Explanation:**")
+    st.info(decision.get('explanation', 'No explanation available'), icon="ℹ️")
 
     st.divider()
 
 
 def display_decision_factors(factors: Dict[str, Any]):
-    """Display key decision factors"""
-    st.subheader("📊 Key Decision Factors")
+    """Display key decision factors from LoanDecisionAgent"""
+    st.subheader("📊 Key Decision Factors from LoanDecisionAgent")
 
     if not factors:
-        st.info("No decision factors available")
+        st.info("No decision factors available", icon="ℹ️")
         return
+
+    # Create detailed factor analysis
+    st.markdown("**Factor Assessment Breakdown:**")
 
     col1, col2 = st.columns(2)
 
     with col1:
-        st.write("**Factor Breakdown:**")
-        for factor, value in factors.items():
-            st.write(f"• **{factor.replace('_', ' ').title()}**: {value}")
+        st.markdown("**Individual Factors:**")
+        for factor_key, factor_value in factors.items():
+            # Clean up factor name
+            factor_name = factor_key.replace('_', ' ').title()
+
+            # Color code based on factor value
+            if "strong" in str(factor_value).lower() or "stable" in str(factor_value).lower() or "low" in str(factor_value).lower():
+                st.success(f"✅ **{factor_name}**: {factor_value}")
+            elif "acceptable" in str(factor_value).lower() or "moderate" in str(factor_value).lower():
+                st.info(f"ℹ️ **{factor_name}**: {factor_value}")
+            else:
+                st.warning(f"⚠️ **{factor_name}**: {factor_value}")
 
     with col2:
-        # Visual representation
-        st.write("**Factor Analysis:**")
+        # Visual representation with table
+        st.markdown("**Factor Summary Table:**")
         factors_df = pd.DataFrame([
-            {"Factor": k.replace('_', ' ').title(), "Assessment": str(v)}
+            {
+                "Factor": k.replace('_', ' ').title(),
+                "Assessment": str(v),
+                "Status": "✅" if "strong" in str(v).lower() or "stable" in str(v).lower() or "low" in str(v).lower()
+                         else "ℹ️" if "acceptable" in str(v).lower() or "moderate" in str(v).lower()
+                         else "⚠️"
+            }
             for k, v in factors.items()
         ])
-        st.table(factors_df)
+        st.dataframe(factors_df, use_container_width=True, hide_index=True)
+
+    # Key Insights
+    st.markdown("**💡 Factor Insights:**")
+    insights = []
+    for factor_key, factor_value in factors.items():
+        insights.append(f"• {factor_key.replace('_', ' ').title()}: {factor_value}")
+
+    for insight in insights:
+        st.write(insight)
 
     st.divider()
 
