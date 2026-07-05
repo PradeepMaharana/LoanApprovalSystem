@@ -8,9 +8,15 @@ Integrates with FastAPI orchestrator for end-to-end processing
 import streamlit as st
 import requests
 import json
+import pandas as pd
 from datetime import datetime
 from typing import Dict, Any
 import time
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from streamlit_integration import LoanAPIClient
 
 # ============================================================================
 # Configuration
@@ -40,6 +46,8 @@ def init_session_state():
         st.session_state.processing_result = None
     if "applicant_id" not in st.session_state:
         st.session_state.applicant_id = None
+    if "show_raw_json" not in st.session_state:
+        st.session_state.show_raw_json = False
 
 
 init_session_state()
@@ -197,18 +205,46 @@ def render_sidebar():
 
         st.divider()
 
+        st.subheader("🔍 Quick Search")
+
+        api_client = LoanAPIClient(base_url="http://localhost:8000")
+
+        search_app_id = st.text_input(
+            "Search Applicant ID",
+            placeholder="APP-2024-001",
+            key="sidebar_search_id"
+        )
+
+        if st.button("Search", use_container_width=True, key="sidebar_search_btn"):
+            if search_app_id:
+                with st.spinner("Searching..."):
+                    results = api_client.search_applicants(applicant_id=search_app_id)
+                    if results and results.get('data'):
+                        st.success(f"✅ Found applicant!")
+                        applicant = results['data'][0]
+                        st.session_state.applicant_id = applicant.get('applicant_id')
+                        st.rerun()
+                    else:
+                        st.warning("❌ Applicant not found")
+            else:
+                st.warning("Please enter an applicant ID")
+
+        st.divider()
+
         st.subheader("⚙️ Settings")
 
         api_url = st.text_input(
             "API URL",
             value=API_BASE_URL,
-            help="FastAPI orchestrator URL"
+            help="FastAPI orchestrator URL",
+            key="settings_api_url"
         )
 
-        show_raw_json = st.checkbox(
+        st.session_state.show_raw_json = st.checkbox(
             "Show Raw JSON",
-            value=False,
-            help="Display raw API responses"
+            value=st.session_state.show_raw_json,
+            help="Display raw API responses",
+            key="show_raw_json_checkbox"
         )
 
         st.divider()
@@ -244,17 +280,26 @@ def render_chat_interface():
     # Input area
     st.divider()
 
-    col1, col2 = st.columns([4, 1])
+    user_input = st.text_input(
+        "Enter applicant ID or ask a question:",
+        placeholder="APP-2026-000001 or 'Process applicant APP-2026-000001'",
+        label_visibility="collapsed",
+        key="chat_input_main"
+    )
 
-    with col1:
-        user_input = st.text_input(
-            "Enter applicant ID or ask a question:",
-            placeholder="APP-2026-000001 or 'Process applicant APP-2026-000001'",
-            label_visibility="collapsed"
-        )
+    col_btn1, col_btn2, col_btn3 = st.columns(3)
 
-    with col2:
-        submit_button = st.button("Send", use_container_width=True, type="primary")
+    with col_btn1:
+        submit_button = st.button("▶️ Send", use_container_width=True, type="primary", key="send_main")
+    with col_btn2:
+        clear_button = st.button("🔄 Clear Chat", use_container_width=True, key="clear_chat_btn")
+    with col_btn3:
+        pass
+
+    if clear_button:
+        st.session_state.conversation_history = []
+        st.session_state.processing_result = None
+        st.rerun()
 
     if submit_button and user_input:
         # Add user message

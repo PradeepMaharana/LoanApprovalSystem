@@ -1,10 +1,16 @@
 from fastapi import FastAPI, HTTPException, status, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
 import logging
+import sys
+from pathlib import Path
+
+# Add src to path for imports
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from database.db_service import get_db_service
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -238,9 +244,29 @@ def get_risk_level(risk_score: float) -> str:
         return "Very High Risk"
 
 
-# In-memory storage (replace with database in production)
-applications_db = {}
+# Database service
+db_service = None
 application_counter = 0
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database connection on startup"""
+    global db_service
+    try:
+        db_service = get_db_service()
+        logger.info("✅ Database service initialized")
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize database: {e}")
+
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database connection on shutdown"""
+    global db_service
+    if db_service:
+        db_service.disconnect()
+        logger.info("✅ Database connection closed")
 
 
 # API Routes
@@ -269,7 +295,14 @@ async def submit_application(request: LoanApplicationRequest):
     - **loan_details**: Credit and loan details
     """
     try:
-        global application_counter
+        global application_counter, db_service
+
+        if not db_service:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database service not available"
+            )
+
         application_counter += 1
 
         # Calculate risk assessment
@@ -295,6 +328,39 @@ async def submit_application(request: LoanApplicationRequest):
             message = "Application received and under review. You'll receive updates within 2-3 business days."
 
         application_id = f"LOAN-{datetime.now().strftime('%Y%m%d')}-{application_counter:06d}"
+        now = datetime.now()
+
+        # Insert applicant data into database
+        applicant_inserted = db_service.insert_applicant({
+            'applicant_id': request.applicant.applicant_id,
+            'age': request.applicant.age,
+            'income': request.applicant.income,
+            'employment_type': request.applicant.employment_type.value,
+            'location': request.applicant.location
+        })
+
+        if not applicant_inserted:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save applicant information"
+            )
+
+        # Insert loan application data into database
+        loan_inserted = db_service.insert_loan_application({
+            'applicant_id': request.applicant.applicant_id,
+            'credit_score': request.loan_details.credit_score,
+            'loan_amount': request.loan_details.loan_amount,
+            'tenure_months': request.loan_details.tenure,
+            'existing_liabilities': request.loan_details.liabilities,
+            'risk_score': risk_data['risk_score'],
+            'risk_level': risk_level
+        })
+
+        if not loan_inserted:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save loan application"
+            )
 
         # Create response
         risk_assessment = RiskAssessment(
@@ -311,15 +377,12 @@ async def submit_application(request: LoanApplicationRequest):
             applicant_id=request.applicant.applicant_id,
             loan_amount=request.loan_details.loan_amount,
             risk_assessment=risk_assessment,
-            created_at=datetime.now(),
-            updated_at=datetime.now(),
+            created_at=now,
+            updated_at=now,
             message=message
         )
 
-        # Store application
-        applications_db[application_id] = response
-
-        logger.info(f"Application {application_id} submitted for {request.applicant.applicant_id}")
+        logger.info(f"Application {application_id} submitted for {request.applicant.applicant_id} (DB persisted)")
 
         return response
 
@@ -428,6 +491,224 @@ async def validate_application(request: LoanApplicationRequest):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
+        )
+
+
+@app.get(
+    "/api/v1/applicants/search",
+    tags=["Search"],
+    summary="Search Applicants"
+)
+async def search_applicants(
+    applicant_id: Optional[str] = Query(None, description="Applicant ID"),
+    location: Optional[str] = Query(None, description="Location (partial match)"),
+    age_min: Optional[int] = Query(None, description="Minimum age"),
+    age_max: Optional[int] = Query(None, description="Maximum age"),
+    employment_type: Optional[str] = Query(None, description="Employment type"),
+    credit_score_min: Optional[int] = Query(None, description="Minimum credit score"),
+    credit_score_max: Optional[int] = Query(None, description="Maximum credit score"),
+    application_status: Optional[str] = Query(None, description="Application status"),
+    limit: int = Query(100, ge=1, le=500, description="Max results")
+):
+    """
+    Search applicants by multiple criteria.
+    All parameters are optional and can be combined.
+    """
+    global db_service
+
+    if not db_service:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database service not available"
+        )
+
+    try:
+        criteria = {}
+        if applicant_id:
+            criteria['applicant_id'] = applicant_id
+        if location:
+            criteria['location'] = location
+        if age_min is not None:
+            criteria['age_min'] = age_min
+        if age_max is not None:
+            criteria['age_max'] = age_max
+        if employment_type:
+            criteria['employment_type'] = employment_type
+        if credit_score_min is not None:
+            criteria['credit_score_min'] = credit_score_min
+        if credit_score_max is not None:
+            criteria['credit_score_max'] = credit_score_max
+        if application_status:
+            criteria['application_status'] = application_status
+
+        results = db_service.search_applicants(criteria, limit=limit)
+
+        return {
+            "count": len(results),
+            "data": results
+        }
+
+    except Exception as e:
+        logger.error(f"Search error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error performing search"
+        )
+
+
+@app.get(
+    "/api/v1/applicants",
+    tags=["Applicants"],
+    summary="List All Applicants"
+)
+async def list_all_applicants(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=500)
+):
+    """
+    List all applicants with pagination.
+    Data retrieved from MySQL database.
+    """
+    global db_service
+
+    if not db_service:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database service not available"
+        )
+
+    try:
+        result = db_service.list_all_applicants(page=page, limit=limit)
+        return result
+
+    except Exception as e:
+        logger.error(f"List applicants error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving applicants"
+        )
+
+
+@app.get(
+    "/api/v1/applicants/{applicant_id}",
+    tags=["Applicants"],
+    summary="Get Applicant Profile"
+)
+async def get_applicant_profile(applicant_id: str):
+    """
+    Get complete applicant profile including loan application and risk assessment.
+    """
+    global db_service
+
+    if not db_service:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database service not available"
+        )
+
+    try:
+        applicant = db_service.get_applicant_with_application(applicant_id)
+
+        if not applicant:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Applicant {applicant_id} not found"
+            )
+
+        return applicant
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Get applicant error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving applicant"
+        )
+
+
+@app.put(
+    "/api/v1/applicants/{applicant_id}",
+    tags=["Applicants"],
+    summary="Update Applicant"
+)
+async def update_applicant_endpoint(
+    applicant_id: str,
+    update_data: Dict[str, Any]
+):
+    """
+    Update applicant information.
+    Only accepts fields: age, income, employment_type, location
+    """
+    global db_service
+
+    if not db_service:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database service not available"
+        )
+
+    try:
+        # Validate allowed fields
+        allowed_fields = {'age', 'income', 'employment_type', 'location'}
+        update_fields = {k: v for k, v in update_data.items() if k in allowed_fields}
+
+        if not update_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No valid fields to update"
+            )
+
+        success = db_service.update_applicant(applicant_id, update_fields)
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Applicant {applicant_id} not found"
+            )
+
+        return {
+            "success": True,
+            "message": f"Applicant {applicant_id} updated successfully",
+            "updated_fields": list(update_fields.keys())
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Update applicant error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error updating applicant"
+        )
+
+
+@app.get(
+    "/api/v1/statistics",
+    tags=["Statistics"],
+    summary="Get Database Statistics"
+)
+async def get_statistics():
+    """
+    Get database statistics including counts and breakdowns.
+    """
+    global db_service
+
+    if not db_service:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Database service not available"
+        )
+
+    try:
+        stats = db_service.get_statistics()
+        return stats
+
+    except Exception as e:
+        logger.error(f"Statistics error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error retrieving statistics"
         )
 
 

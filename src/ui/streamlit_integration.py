@@ -98,6 +98,43 @@ class LoanAPIClient:
         except Exception:
             return False
 
+    def search_applicants(self, **filters) -> Optional[Dict[str, Any]]:
+        """
+        Search applicants by multiple criteria
+        Accepts: applicant_id, location, age_min, age_max, employment_type,
+                 credit_score_min, credit_score_max, application_status, limit
+        """
+        return self._make_request("GET", "/applicants/search", params=filters)
+
+    def list_all_applicants(
+        self,
+        page: int = 1,
+        limit: int = 50
+    ) -> Optional[Dict[str, Any]]:
+        """List all applicants with pagination"""
+        params = {"page": page, "limit": limit}
+        return self._make_request("GET", "/applicants", params=params)
+
+    def get_applicant_profile(self, applicant_id: str) -> Optional[Dict[str, Any]]:
+        """Get complete applicant profile"""
+        return self._make_request("GET", f"/applicants/{applicant_id}")
+
+    def update_applicant(self, applicant_id: str, update_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update applicant information"""
+        return self._make_request("PUT", f"/applicants/{applicant_id}", data=update_data)
+
+    def get_statistics(self) -> Optional[Dict[str, Any]]:
+        """Get database statistics"""
+        return self._make_request("GET", "/statistics")
+
+    def create_loan_application(self, applicant_profile: Dict[str, Any], loan_details: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Create new loan application (combined)"""
+        request_data = {
+            "applicant": applicant_profile,
+            "loan_details": loan_details
+        }
+        return self.submit_application(request_data)
+
 
 # Streamlit helper functions
 @st.cache_resource
