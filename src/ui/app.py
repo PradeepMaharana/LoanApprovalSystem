@@ -291,7 +291,7 @@ with col1:
 
     with col_left:
         applicant_id = st.text_input(
-            "Applicant ID",
+            "Applicant ID *",
             value=st.session_state.current_form['applicant_id'],
             placeholder="e.g., APP-2024-001",
             key="applicant_id_input"
@@ -300,12 +300,29 @@ with col1:
 
     with col_right:
         location = st.text_input(
-            "Location",
+            "Location *",
             value=st.session_state.current_form['location'],
             placeholder="e.g., New York, NY",
             key="location_input"
         )
         st.session_state.current_form['location'] = location
+
+    # Application Timestamp
+    col_ts1, col_ts2 = st.columns(2)
+    with col_ts1:
+        app_date = st.date_input(
+            "Application Date",
+            value=datetime.strptime(st.session_state.current_form['timestamp'][:10], '%Y-%m-%d') if st.session_state.current_form['timestamp'] else datetime.now(),
+            key="app_date_input"
+        )
+    with col_ts2:
+        app_time = st.time_input(
+            "Application Time",
+            value=datetime.strptime(st.session_state.current_form['timestamp'], '%Y-%m-%d %H:%M:%S').time() if st.session_state.current_form['timestamp'] else datetime.now().time(),
+            key="app_time_input"
+        )
+    timestamp_str = f"{app_date.strftime('%Y-%m-%d')} {app_time.strftime('%H:%M:%S')}"
+    st.session_state.current_form['timestamp'] = timestamp_str
 
     # Profile Section
     st.markdown('<div class="form-section"><h4>📊 Applicant Profile</h4></div>', unsafe_allow_html=True)
@@ -314,89 +331,173 @@ with col1:
 
     with col_p1:
         age = st.number_input(
-            "Age",
+            "Age (years) *",
             min_value=18,
             max_value=100,
             value=st.session_state.current_form['age'] or 30,
-            key="age_input"
+            key="age_input",
+            help="Applicant's current age in years"
         )
         st.session_state.current_form['age'] = age
 
     with col_p2:
         income = st.number_input(
-            "Annual Income ($)",
+            "Annual Income ($) *",
             min_value=0,
             step=5000,
             value=st.session_state.current_form['income'] or 50000,
-            key="income_input"
+            key="income_input",
+            help="Gross annual income of the applicant"
         )
         st.session_state.current_form['income'] = income
 
     with col_p3:
         employment_type = st.selectbox(
-            "Employment Type",
+            "Employment Type *",
             options=["", "Salaried", "Self-Employed", "Freelancer", "Business Owner"],
             index=0 if not st.session_state.current_form['employment_type'] else
                   ["", "Salaried", "Self-Employed", "Freelancer", "Business Owner"].index(st.session_state.current_form['employment_type']),
-            key="employment_input"
+            key="employment_input",
+            help="Type of employment"
         )
         st.session_state.current_form['employment_type'] = employment_type
 
     # Credit & Loan Section
     st.markdown('<div class="form-section"><h4>💰 Credit & Loan Details</h4></div>', unsafe_allow_html=True)
 
-    col_c1, col_c2, col_c3 = st.columns(3)
+    col_c1, col_c2 = st.columns(2)
 
     with col_c1:
         credit_score = st.number_input(
-            "Credit Score",
+            "Credit Score *",
             min_value=300,
             max_value=850,
             value=st.session_state.current_form['credit_score'] or 700,
-            key="credit_input"
+            key="credit_input",
+            help="Applicant's credit score (300-850)"
         )
         st.session_state.current_form['credit_score'] = credit_score
 
     with col_c2:
+        st.markdown("**Credit Score Range**")
+        if credit_score >= 750:
+            st.success("Excellent (750+)")
+        elif credit_score >= 700:
+            st.info("Good (700-749)")
+        elif credit_score >= 650:
+            st.warning("Fair (650-699)")
+        else:
+            st.error("Poor (<650)")
+
+    # Loan Details
+    col_l1, col_l2 = st.columns(2)
+
+    with col_l1:
         loan_amount = st.number_input(
-            "Loan Amount ($)",
+            "Loan Amount ($) *",
             min_value=1000,
             step=5000,
             value=st.session_state.current_form['loan_amount'] or 100000,
-            key="loan_amount_input"
+            key="loan_amount_input",
+            help="Total loan amount requested"
         )
         st.session_state.current_form['loan_amount'] = loan_amount
 
-    with col_c3:
+    with col_l2:
         tenure = st.number_input(
-            "Tenure (months)",
+            "Loan Tenure (months) *",
             min_value=3,
             max_value=360,
             value=st.session_state.current_form['tenure'] or 60,
-            key="tenure_input"
+            key="tenure_input",
+            help="Loan repayment period in months (3-360)"
         )
         st.session_state.current_form['tenure'] = tenure
+
+    # Monthly Payment Calculation
+    if tenure > 0:
+        monthly_payment = loan_amount / tenure
+        st.metric("Estimated Monthly Payment", f"${monthly_payment:,.2f}", help="Approximate monthly payment amount")
 
     # Liabilities Section
     st.markdown('<div class="form-section"><h4>📈 Financial Obligations</h4></div>', unsafe_allow_html=True)
 
     liabilities = st.number_input(
-        "Existing Liabilities ($)",
+        "Existing Liabilities ($) *",
         min_value=0,
         step=1000,
         value=st.session_state.current_form['liabilities'] or 0,
-        key="liabilities_input"
+        key="liabilities_input",
+        help="Total existing debts (credit cards, auto loans, mortgage, etc.)"
     )
     st.session_state.current_form['liabilities'] = liabilities
+
+    # Financial Summary
+    st.markdown("**Financial Summary**")
+    fin_col1, fin_col2, fin_col3 = st.columns(3)
+
+    with fin_col1:
+        total_debt = liabilities + loan_amount
+        st.metric("Total Debt (with loan)", f"${total_debt:,.0f}", help="Existing liabilities + new loan")
+
+    with fin_col2:
+        dti = ((liabilities + loan_amount) / max(income, 1)) * 100
+        st.metric("Debt-to-Income Ratio", f"{dti:.1f}%", help="Should be <43% for approval")
+
+    with fin_col3:
+        lti = (loan_amount / max(income, 1)) * 100
+        st.metric("Loan-to-Income Ratio", f"{lti:.1f}%", help="Loan as % of annual income")
+
+    # Form Summary/Validation Display
+    st.markdown('<div class="form-section"><h4>✓ Application Summary</h4></div>', unsafe_allow_html=True)
+
+    summary_col1, summary_col2, summary_col3 = st.columns(3)
+
+    with summary_col1:
+        st.markdown("**Personal Information**")
+        st.write(f"🆔 **ID**: {applicant_id if applicant_id else '⚠️ Required'}")
+        st.write(f"📍 **Location**: {location if location else '⚠️ Required'}")
+        st.write(f"👤 **Age**: {age} years")
+        st.write(f"💼 **Employment**: {employment_type if employment_type else '⚠️ Required'}")
+
+    with summary_col2:
+        st.markdown("**Loan Information**")
+        st.write(f"💰 **Loan Amount**: ${loan_amount:,.0f}")
+        st.write(f"📅 **Tenure**: {tenure} months")
+        if tenure > 0:
+            st.write(f"📊 **Monthly Payment**: ${loan_amount/tenure:,.2f}")
+        st.write(f"📆 **Application Date**: {timestamp_str}")
+
+    with summary_col3:
+        st.markdown("**Credit & Financial**")
+        st.write(f"📈 **Credit Score**: {credit_score}")
+        st.write(f"💵 **Annual Income**: ${income:,.0f}")
+        st.write(f"📉 **Existing Liabilities**: ${liabilities:,.0f}")
+        dti_ratio = ((liabilities + loan_amount) / income) * 100
+        st.write(f"⚖️ **DTI Ratio**: {dti_ratio:.1f}%")
 
     # Buttons
     col_btn1, col_btn2, col_btn3 = st.columns(3)
 
     with col_btn1:
         if st.button("✅ Submit Application", use_container_width=True, type="primary"):
-            if not applicant_id or not employment_type or not location:
+            # Validate required fields
+            required_fields = {
+                "Applicant ID": applicant_id,
+                "Age": age,
+                "Annual Income": income,
+                "Employment Type": employment_type,
+                "Credit Score": credit_score,
+                "Loan Amount": loan_amount,
+                "Loan Tenure": tenure,
+                "Location": location
+            }
+
+            missing_fields = [field for field, value in required_fields.items() if not value]
+
+            if missing_fields:
                 st.markdown(
-                    '<div class="error-message">❌ Please fill in all required fields (Applicant ID, Employment Type, Location)</div>',
+                    f'<div class="error-message">❌ Please fill in all required fields:<br>• {("<br>• ").join(missing_fields)}</div>',
                     unsafe_allow_html=True
                 )
             else:
@@ -404,14 +505,33 @@ with col1:
                 st.session_state.applications.append(application)
 
                 # Add to chat history
-                message = f"New application submitted: {applicant_id} - Loan Amount: ${loan_amount:,.2f}"
+                dti_ratio = ((liabilities + loan_amount) / income) * 100
+                message = f"New application submitted: {applicant_id} - Loan: ${loan_amount:,.0f}, Credit: {credit_score}, DTI: {dti_ratio:.1f}%"
                 st.session_state.chat_history.append({
                     "role": "user",
                     "message": message,
                     "timestamp": datetime.now().strftime('%H:%M:%S')
                 })
 
-                bot_response = f"Application #{applicant_id} received! Processing loan request for ${loan_amount:,.2f} with credit score {credit_score}. Expected decision time: 2-3 business days."
+                bot_response = f"""✅ **Application #{applicant_id} Received!**
+
+**Applicant Details:**
+- Age: {age} years
+- Location: {location}
+- Employment: {employment_type}
+
+**Loan Details:**
+- Amount: ${loan_amount:,.0f}
+- Tenure: {tenure} months
+- Estimated Monthly Payment: ${loan_amount/tenure:,.2f}
+
+**Credit Profile:**
+- Credit Score: {credit_score}
+- Existing Liabilities: ${liabilities:,.0f}
+- Total Debt (with loan): ${liabilities + loan_amount:,.0f}
+- Debt-to-Income Ratio: {dti_ratio:.1f}%
+
+Your application is now under review. Expected decision time: **2-3 business days**."""
                 st.session_state.chat_history.append({
                     "role": "bot",
                     "message": bot_response,
@@ -419,7 +539,7 @@ with col1:
                 })
 
                 st.markdown(
-                    '<div class="success-message">✅ Application submitted successfully! Please wait for approval notification.</div>',
+                    '<div class="success-message">✅ Application submitted successfully! Your application ID is <strong>' + applicant_id + '</strong>. Please check back for updates.</div>',
                     unsafe_allow_html=True
                 )
                 st.rerun()
