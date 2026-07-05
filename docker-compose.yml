@@ -1,0 +1,107 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: loan_approval_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password
+      MYSQL_DATABASE: loan_approval_system
+      MYSQL_USER: loan_user
+      MYSQL_PASSWORD: loan_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./src/database/schema.sql:/docker-entrypoint-initdb.d/schema.sql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - loan_network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: loan_approval_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - loan_network
+
+  # FastAPI Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loan_approval_api
+    environment:
+      DATABASE_URL: mysql://loan_user:loan_password@mysql:3306/loan_approval_system
+      REDIS_URL: redis://redis:6379
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "8000:8000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - loan_network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Streamlit Main App
+  streamlit_app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loan_approval_streamlit
+    command: streamlit run src/ui/app.py --server.port=8501
+    environment:
+      API_BASE_URL: http://api:8000
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "8501:8501"
+    depends_on:
+      - api
+    networks:
+      - loan_network
+
+  # Streamlit Chatbot UI
+  streamlit_chatbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: loan_approval_chatbot
+    command: streamlit run src/ui/streamlit_chatbot_ui.py --server.port=8502
+    environment:
+      API_BASE_URL: http://api:8000
+      PYTHONUNBUFFERED: 1
+    ports:
+      - "8502:8502"
+    depends_on:
+      - api
+    networks:
+      - loan_network
+
+volumes:
+  mysql_data:
+  redis_data:
+
+networks:
+  loan_network:
+    driver: bridge
