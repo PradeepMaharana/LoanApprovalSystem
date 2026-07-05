@@ -18,6 +18,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from streamlit_integration import LoanAPIClient
 
+# Additional imports needed for better error handling
+logger = None
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -57,22 +60,27 @@ init_session_state()
 def get_agent_analysis(applicant_id: str) -> Dict[str, Any]:
     """Get comprehensive agent analysis from orchestrator"""
     try:
+        st.info(f"🔄 Fetching agent analysis for {applicant_id}...")
         response = requests.get(
             f"{API_BASE_URL}/api/v1/analyze/{applicant_id}",
             timeout=30
         )
 
         if response.status_code == 200:
-            return response.json()
+            result = response.json()
+            st.success(f"✅ Agent analysis retrieved successfully")
+            return result
+        elif response.status_code == 404:
+            return {"status": "error", "error": f"Applicant {applicant_id} not found in database"}
         else:
-            return {"status": "error", "error": f"API error: {response.status_code}"}
+            return {"status": "error", "error": f"API error: {response.status_code}", "details": response.text}
 
     except requests.Timeout:
-        return {"status": "error", "error": "Analysis timeout - request took too long"}
+        return {"status": "error", "error": "Analysis timeout - request took too long (>30s)"}
     except requests.ConnectionError:
-        return {"status": "error", "error": "Failed to connect to API server"}
+        return {"status": "error", "error": "Failed to connect to API server at http://localhost:8000"}
     except Exception as e:
-        return {"status": "error", "error": str(e)}
+        return {"status": "error", "error": f"Unexpected error: {str(e)}"}
 
 
 def display_applicant_profile(profile: Dict[str, Any]):
@@ -308,9 +316,13 @@ def render_main_content():
         with st.expander("📖 How to Use This Tool", expanded=True):
             st.markdown("""
             ### Steps:
-            1. **Enter Applicant ID** - Use format like `APP-2024-001`
-            2. **Click "Analyze Application"** - System will fetch and analyze the applicant
-            3. **Review Results** - See decision, profile, financial data, and recommendations
+            1. **Enter Applicant ID** - Use format like `APP-2024-001` (from loan application form)
+            2. **Click "Analyze Application"** - System will:
+               - Fetch applicant profile from database
+               - Run ApplicantProfileAgent for income/employment analysis
+               - Run FinancialRiskAgent for DTI/LTI analysis
+               - Run LoanDecisionAgent for approval decision
+            3. **Review Results** - See comprehensive agent analysis
 
             ### Data Displayed:
             - 👤 **Applicant Profile**: Income Stability Score, Employment Risk, Demographics
@@ -318,6 +330,14 @@ def render_main_content():
             - 💰 **Financial Analysis**: DTI, LTI ratios, monthly payment estimate
             - 📊 **Decision Factors**: Credit score, DTI ratio, income stability, employment risk
             - ✨ **Recommended Actions**: Next steps based on decision
+            - 📈 **Agent Output**: Raw agent analysis data for transparency
+
+            ### Getting Started:
+            1. Go to main application form at http://localhost:8501
+            2. Fill in and submit a loan application
+            3. Copy the Applicant ID from the success message
+            4. Return to this chatbot and enter that Applicant ID
+            5. Click "Analyze Application" to see agent analysis
             """)
         return
 
@@ -326,16 +346,46 @@ def render_main_content():
 
     if analysis.get('status') == 'error':
         st.error(f"❌ Error: {analysis.get('error', 'Unknown error')}")
+        if analysis.get('details'):
+            st.info(f"📋 Details: {analysis.get('details')}")
         return
 
     # Main analysis display
     display_loan_status(analysis)
 
+    # Agent Output Data Section
+    st.divider()
+    st.subheader("🤖 Agent Analysis Output Data")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        if st.session_state.show_raw_json:
+            st.info("Raw JSON output shown below")
+        else:
+            if st.button("📋 Show Raw JSON Data", use_container_width=True):
+                st.session_state.show_raw_json = True
+                st.rerun()
+
+    with col2:
+        if st.session_state.show_raw_json:
+            if st.button("🙈 Hide Raw JSON", use_container_width=True):
+                st.session_state.show_raw_json = False
+                st.rerun()
+
     # Raw JSON section
     if st.session_state.show_raw_json:
-        st.divider()
-        st.subheader("📋 Raw Response JSON")
+        st.markdown("**Complete Agent Response (JSON)**")
         st.json(analysis)
+
+        # Export option
+        json_str = json.dumps(analysis, indent=2, default=str)
+        st.download_button(
+            label="📥 Download Analysis as JSON",
+            data=json_str,
+            file_name=f"agent_analysis_{st.session_state.applicant_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json"
+        )
 
 
 # ============================================================================

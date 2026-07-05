@@ -501,48 +501,103 @@ with col1:
                     unsafe_allow_html=True
                 )
             else:
-                application = st.session_state.current_form.copy()
-                st.session_state.applications.append(application)
+                # Prepare API request payload
+                api_request = {
+                    "applicant": {
+                        "applicant_id": applicant_id,
+                        "age": int(age),
+                        "income": float(income),
+                        "employment_type": employment_type,
+                        "location": location
+                    },
+                    "loan_details": {
+                        "credit_score": int(credit_score),
+                        "loan_amount": float(loan_amount),
+                        "tenure": int(tenure),
+                        "liabilities": float(liabilities)
+                    },
+                    "timestamp": timestamp_str
+                }
 
-                # Add to chat history
-                dti_ratio = ((liabilities + loan_amount) / income) * 100
-                message = f"New application submitted: {applicant_id} - Loan: ${loan_amount:,.0f}, Credit: {credit_score}, DTI: {dti_ratio:.1f}%"
-                st.session_state.chat_history.append({
-                    "role": "user",
-                    "message": message,
-                    "timestamp": datetime.now().strftime('%H:%M:%S')
-                })
+                # Submit to API which inserts into database
+                with st.spinner("📤 Submitting application to server..."):
+                    api_client = st.session_state.api_client
+                    api_response = api_client.submit_application(api_request)
 
-                bot_response = f"""✅ **Application #{applicant_id} Received!**
+                if api_response and api_response.get("status") in ["SUBMITTED", "UNDER_REVIEW", "APPROVED", "REJECTED"]:
+                    # Store in session state for history
+                    application = st.session_state.current_form.copy()
+                    st.session_state.applications.append(application)
+
+                    # Get application details from API response
+                    application_id = api_response.get("application_id", "N/A")
+                    status = api_response.get("status", "SUBMITTED")
+                    risk_score = api_response.get("risk_assessment", {}).get("risk_score", 0)
+                    risk_level = api_response.get("risk_assessment", {}).get("risk_level", "N/A")
+                    dti_ratio = api_response.get("risk_assessment", {}).get("dti_ratio", 0) * 100
+
+                    # Add to chat history
+                    message = f"New application submitted: {applicant_id} - Loan: ${loan_amount:,.0f}, Credit: {credit_score}, DTI: {dti_ratio:.1f}%"
+                    st.session_state.chat_history.append({
+                        "role": "user",
+                        "message": message,
+                        "timestamp": datetime.now().strftime('%H:%M:%S')
+                    })
+
+                    bot_response = f"""✅ **Application #{application_id} Successfully Submitted!**
+
+**Status**: {status} | **Risk Level**: {risk_level}
 
 **Applicant Details:**
+- ID: {applicant_id}
 - Age: {age} years
 - Location: {location}
 - Employment: {employment_type}
+- Annual Income: ${income:,.0f}
 
 **Loan Details:**
 - Amount: ${loan_amount:,.0f}
 - Tenure: {tenure} months
 - Estimated Monthly Payment: ${loan_amount/tenure:,.2f}
 
-**Credit Profile:**
+**Credit & Financial Assessment:**
 - Credit Score: {credit_score}
+- Risk Score: {risk_score:.1f}/100
 - Existing Liabilities: ${liabilities:,.0f}
 - Total Debt (with loan): ${liabilities + loan_amount:,.0f}
 - Debt-to-Income Ratio: {dti_ratio:.1f}%
 
-Your application is now under review. Expected decision time: **2-3 business days**."""
-                st.session_state.chat_history.append({
-                    "role": "bot",
-                    "message": bot_response,
-                    "timestamp": datetime.now().strftime('%H:%M:%S')
-                })
+📊 **Your application has been saved to the database and is now under review.**
+Expected decision time: **2-3 business days**.
+You can check the status using the search feature with your Applicant ID: **{applicant_id}**"""
 
-                st.markdown(
-                    '<div class="success-message">✅ Application submitted successfully! Your application ID is <strong>' + applicant_id + '</strong>. Please check back for updates.</div>',
-                    unsafe_allow_html=True
-                )
-                st.rerun()
+                    st.session_state.chat_history.append({
+                        "role": "bot",
+                        "message": bot_response,
+                        "timestamp": datetime.now().strftime('%H:%M:%S')
+                    })
+
+                    st.markdown(
+                        f'<div class="success-message">✅ Application submitted successfully!<br>Application ID: <strong>{application_id}</strong><br>Applicant ID: <strong>{applicant_id}</strong><br>Status: <strong>{status}</strong></div>',
+                        unsafe_allow_html=True
+                    )
+
+                    # Store last application in session state
+                    st.session_state.last_application = {
+                        "application_id": application_id,
+                        "applicant_id": applicant_id,
+                        "status": status,
+                        "risk_score": risk_score,
+                        "risk_level": risk_level
+                    }
+
+                    st.rerun()
+                else:
+                    error_msg = api_response.get("detail", "Unknown error") if api_response else "Unable to connect to server"
+                    st.markdown(
+                        f'<div class="error-message">❌ Submission failed: {error_msg}<br>Please ensure the API server is running on http://localhost:8000</div>',
+                        unsafe_allow_html=True
+                    )
 
     with col_btn2:
         if st.button("🔄 Clear Form", use_container_width=True):

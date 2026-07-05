@@ -73,12 +73,6 @@ class CreditLoanDetails(BaseModel):
     tenure: int = Field(..., ge=3, le=360, description="Loan tenure in months")
     liabilities: float = Field(default=0, ge=0, description="Existing liabilities in USD")
 
-    @validator('tenure')
-    def validate_tenure(cls, v):
-        if v % 3 != 0:
-            raise ValueError('Tenure must be in multiples of 3 months')
-        return v
-
 
 class LoanApplicationRequest(BaseModel):
     applicant: ApplicantProfile
@@ -362,7 +356,7 @@ async def submit_application(request: LoanApplicationRequest):
             )
 
         # Insert loan application data into database
-        loan_inserted = db_service.insert_loan_application({
+        loan_data = {
             'applicant_id': request.applicant.applicant_id,
             'credit_score': request.loan_details.credit_score,
             'loan_amount': request.loan_details.loan_amount,
@@ -370,13 +364,18 @@ async def submit_application(request: LoanApplicationRequest):
             'existing_liabilities': request.loan_details.liabilities,
             'risk_score': risk_data['risk_score'],
             'risk_level': risk_level
-        })
+        }
+
+        logger.info(f"📝 Inserting loan application: {loan_data}")
+        loan_inserted = db_service.insert_loan_application(loan_data)
 
         if not loan_inserted:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Failed to save loan application"
             )
+
+        logger.info(f"✅ Successfully inserted loan application into database for {request.applicant.applicant_id}")
 
         # Create response
         risk_assessment = RiskAssessment(
