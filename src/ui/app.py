@@ -1,16 +1,30 @@
+#!/usr/bin/env python3
+
+"""
+Loan Application Form - Enhanced Streamlit UI
+Complete form for submitting loan applications with real-time validation
+and database persistence via FastAPI backend
+"""
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 import json
 from pathlib import Path
 import sys
+import requests
 
 sys.path.insert(0, str(Path(__file__).parent))
 from streamlit_integration import LoanAPIClient
 
-# Configure Streamlit page
+# ============================================================================
+# Configuration
+# ============================================================================
+
+API_BASE_URL = "http://localhost:8000"
+
 st.set_page_config(
-    page_title="Loan Approval Chatbot",
+    page_title="🏦 Loan Application Form",
     page_icon="🏦",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -40,14 +54,6 @@ st.markdown("""
         margin-bottom: 1rem;
     }
 
-    .metric-card {
-        background: white;
-        padding: 1.5rem;
-        border-radius: 8px;
-        border: 1px solid #e0e0e0;
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
-    }
-
     .success-message {
         background: #d4edda;
         border: 1px solid #c3e6cb;
@@ -55,54 +61,6 @@ st.markdown("""
         padding: 1rem;
         border-radius: 4px;
         margin: 1rem 0;
-    }
-
-    .warning-message {
-        background: #fff3cd;
-        border: 1px solid #ffeaa7;
-        color: #856404;
-        padding: 1rem;
-        border-radius: 4px;
-        margin: 1rem 0;
-    }
-
-    .error-message {
-        background: #f8d7da;
-        border: 1px solid #f5c6cb;
-        color: #721c24;
-        padding: 1rem;
-        border-radius: 4px;
-        margin: 1rem 0;
-    }
-
-    .chat-message {
-        padding: 1rem;
-        border-radius: 8px;
-        margin-bottom: 0.5rem;
-        line-height: 1.6;
-    }
-
-    .user-message {
-        background: #e3f2fd;
-        border-left: 4px solid #2196f3;
-    }
-
-    .bot-message {
-        background: #f5f5f5;
-        border-left: 4px solid #667eea;
-    }
-
-    .application-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-        gap: 1rem;
-        margin-bottom: 1.5rem;
-    }
-
-    .input-label {
-        font-weight: 600;
-        color: #333;
-        margin-bottom: 0.5rem;
     }
 
     .summary-table {
@@ -114,217 +72,133 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Helper functions (defined early for use throughout)
-def calculate_risk_score(credit_score, liabilities, income, loan_amount, age):
-    """Calculate a risk score based on application metrics"""
-    score = 100
+# ============================================================================
+# Session State Management
+# ============================================================================
 
-    # Credit score factor (max -40)
-    if credit_score < 600:
-        score -= 40
-    elif credit_score < 650:
-        score -= 30
-    elif credit_score < 700:
-        score -= 15
-    elif credit_score >= 750:
-        score += 5
-
-    # Debt-to-income ratio (max -30)
-    if income > 0:
-        dti = (liabilities + loan_amount) / income
-        if dti > 0.6:
-            score -= 30
-        elif dti > 0.5:
-            score -= 20
-        elif dti > 0.4:
-            score -= 10
-
-    # Age factor (max -15)
-    if age < 25 or age > 65:
-        score -= 15
-    elif age > 60:
-        score -= 5
-
-    # Loan-to-income ratio (max -20)
-    if income > 0:
-        lti = loan_amount / income
-        if lti > 5:
-            score -= 20
-        elif lti > 3:
-            score -= 10
-
-    return max(0, min(100, score))
+def init_session_state():
+    """Initialize session state"""
+    if "current_form" not in st.session_state:
+        st.session_state.current_form = {
+            'applicant_id': '',
+            'age': 30,
+            'income': 50000,
+            'employment_type': '',
+            'credit_score': 700,
+            'loan_amount': 100000,
+            'tenure': 60,
+            'liabilities': 0,
+            'location': '',
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+    if "applications" not in st.session_state:
+        st.session_state.applications = []
+    if "last_submission" not in st.session_state:
+        st.session_state.last_submission = None
+    if "api_client" not in st.session_state:
+        st.session_state.api_client = LoanAPIClient()
 
 
-def get_risk_level(risk_score):
-    """Determine risk level based on score"""
-    if risk_score >= 75:
-        return "Very Low Risk 🟢", "#4CAF50"
-    elif risk_score >= 60:
-        return "Low Risk 🟡", "#8BC34A"
-    elif risk_score >= 40:
-        return "Moderate Risk 🟠", "#FF9800"
-    elif risk_score >= 20:
-        return "High Risk 🔴", "#F44336"
-    else:
-        return "Very High Risk ⛔", "#B71C1C"
+init_session_state()
 
+# ============================================================================
+# Helper Functions
+# ============================================================================
 
-def get_applicant_data_from_db(applicant_id):
-    """Retrieve applicant and application data from database using API"""
+def submit_to_api(form_data):
+    """Submit form data to API"""
     try:
-        api_client = st.session_state.api_client
-        applicant_data = api_client.get_applicant_profile(applicant_id)
-        return applicant_data
-    except Exception as e:
-        st.warning(f"⚠️ Could not retrieve data from database: {str(e)}")
-        return None
+        api_request = {
+            "applicant": {
+                "applicant_id": form_data['applicant_id'],
+                "age": int(form_data['age']),
+                "income": float(form_data['income']),
+                "employment_type": form_data['employment_type'],
+                "location": form_data['location']
+            },
+            "loan_details": {
+                "credit_score": int(form_data['credit_score']),
+                "loan_amount": float(form_data['loan_amount']),
+                "tenure": int(form_data['tenure']),
+                "liabilities": float(form_data['liabilities'])
+            },
+            "timestamp": form_data['timestamp']
+        }
 
+        response = requests.post(
+            f"{API_BASE_URL}/api/v1/applications",
+            json=api_request,
+            timeout=10
+        )
 
-def generate_bot_response(user_input, form_data, risk_score, applicant_id=None):
-    """
-    Generate contextual bot responses with database-retrieved data when available.
-
-    Args:
-        user_input: User's message
-        form_data: Form data (from session or loaded from DB)
-        risk_score: Calculated risk score
-        applicant_id: Applicant ID to fetch live data from database
-    """
-    user_input_lower = user_input.lower()
-
-    # Try to get live data from database if applicant_id provided
-    if applicant_id:
-        db_data = get_applicant_data_from_db(applicant_id)
-        if db_data:
-            # Use database data, fallback to form_data if fields missing
-            credit_score = db_data.get('credit_score', form_data.get('credit_score'))
-            income = db_data.get('income', form_data.get('income'))
-            loan_amount = db_data.get('loan_amount', form_data.get('loan_amount'))
-            location = db_data.get('location', form_data.get('location'))
-            employment_type = db_data.get('employment_type', form_data.get('employment_type'))
-            application_status = db_data.get('application_status', 'SUBMITTED')
+        if response.status_code == 201:
+            return {"status": "success", "data": response.json()}
         else:
-            credit_score = form_data.get('credit_score')
-            income = form_data.get('income')
-            loan_amount = form_data.get('loan_amount')
-            location = form_data.get('location')
-            employment_type = form_data.get('employment_type')
-            application_status = 'SUBMITTED'
-    else:
-        credit_score = form_data.get('credit_score')
-        income = form_data.get('income')
-        loan_amount = form_data.get('loan_amount')
-        location = form_data.get('location')
-        employment_type = form_data.get('employment_type')
-        application_status = 'SUBMITTED'
+            return {"status": "error", "error": f"API error: {response.status_code}"}
 
-    # Validate data
-    if not credit_score or not income or not loan_amount:
-        return "❌ Unable to retrieve your application data. Please ensure you have submitted an application or loaded an existing one."
-
-    responses = {
-        'approval': f"Based on your profile (Credit Score: {credit_score}, Income: ${income:,.0f}, Location: {location}), your approval chances look {'excellent' if risk_score > 75 else 'good' if risk_score > 60 else 'moderate' if risk_score > 40 else 'challenging'}. Current Status: {application_status}. Our team will review your application within 2-3 business days.",
-        'timeline': "Standard loan applications are typically processed within 2-3 business days. We'll send you updates via email and SMS. You can check your status anytime using our search feature.",
-        'documents': "You may need to provide: recent pay stubs, tax returns, bank statements, and employment verification. We'll contact you if additional documents are required for your application.",
-        'interest': f"Interest rates vary based on your credit score ({credit_score}) and loan details. For your requested loan amount of ${loan_amount:,.0f}, you'll receive a formal quote after initial review.",
-        'decline': f"We review each application individually. With your current profile (Employment: {employment_type}, Income: ${income:,.0f}), there's still a good chance of approval. If declined, we can discuss alternatives or improvements.",
-        'modify': "You can modify your application up until it's fully approved. Please use the form above to update any information, or search for your existing application to reload it.",
-        'status': f"Your current application status is: {application_status}. Loan Amount: ${loan_amount:,.0f}, Credit Score: {credit_score}. Last updated in our database.",
-    }
-
-    for keyword, response in responses.items():
-        if keyword in user_input_lower:
-            return response
-
-    return f"Thank you for your inquiry. 📊 I'm reviewing your application:\n\n**Profile Details:**\n- Loan Amount: ${loan_amount:,.0f}\n- Credit Score: {credit_score}\n- Annual Income: ${income:,.0f}\n- Employment: {employment_type}\n- Location: {location}\n- Status: {application_status}\n- Risk Score: {risk_score:.1f}/100\n\nHow else can I assist you today?"
+    except requests.ConnectionError:
+        return {"status": "error", "error": "Cannot connect to API server at http://localhost:8000"}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
-# Initialize session state
-if 'chat_history' not in st.session_state:
-    st.session_state.chat_history = []
+# ============================================================================
+# Main Application
+# ============================================================================
 
-if 'applications' not in st.session_state:
-    st.session_state.applications = []
+def render_header():
+    """Render page header"""
+    st.markdown("""
+    <div class="main-header">
+        <h1>🏦 Loan Application Form</h1>
+        <p>Submit your loan application with comprehensive financial information</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-if 'current_form' not in st.session_state:
-    st.session_state.current_form = {
-        'applicant_id': '',
-        'age': None,
-        'income': None,
-        'employment_type': '',
-        'credit_score': None,
-        'loan_amount': None,
-        'tenure': None,
-        'liabilities': None,
-        'location': '',
-        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    }
 
-if 'search_results' not in st.session_state:
-    st.session_state.search_results = []
+def render_form():
+    """Render the loan application form"""
+    st.markdown("### 📝 Application Details")
 
-if 'show_search' not in st.session_state:
-    st.session_state.show_search = False
+    col1, col2 = st.columns(2)
 
-if 'api_client' not in st.session_state:
-    st.session_state.api_client = LoanAPIClient()
+    # =========== Applicant Information Section ===========
+    with col1:
+        st.markdown('<div class="form-section"><h4>👤 Applicant Information</h4></div>', unsafe_allow_html=True)
 
-# Header
-st.markdown("""
-<div class="main-header">
-    <h1>🏦 Loan Approval Chatbot</h1>
-    <p>Interactive AI Assistant for Loan Application Processing</p>
-</div>
-""", unsafe_allow_html=True)
-
-# Main layout
-col1, col2 = st.columns([2, 1])
-
-with col1:
-    st.markdown("### 📋 Application Form")
-
-    # Applicant Information Section
-    st.markdown('<div class="form-section"><h4>👤 Applicant Information</h4></div>', unsafe_allow_html=True)
-
-    col_left, col_right = st.columns(2)
-
-    with col_left:
         applicant_id = st.text_input(
             "Applicant ID *",
             value=st.session_state.current_form['applicant_id'],
-            placeholder="e.g., APP-2024-001",
-            key="applicant_id_input"
+            placeholder="APP-2024-001001",
+            key="applicant_id"
         )
         st.session_state.current_form['applicant_id'] = applicant_id
 
-    with col_right:
         location = st.text_input(
             "Location *",
             value=st.session_state.current_form['location'],
-            placeholder="e.g., New York, NY",
-            key="location_input"
+            placeholder="New York, NY",
+            key="location"
         )
         st.session_state.current_form['location'] = location
 
-    # Application Timestamp
-    col_ts1, col_ts2 = st.columns(2)
-    with col_ts1:
+    with col2:
+        st.markdown('<div class="form-section"><h4>📅 Application Timestamp</h4></div>', unsafe_allow_html=True)
+
         app_date = st.date_input(
             "Application Date",
-            value=datetime.strptime(st.session_state.current_form['timestamp'][:10], '%Y-%m-%d') if st.session_state.current_form['timestamp'] else datetime.now(),
-            key="app_date_input"
+            value=datetime.strptime(st.session_state.current_form['timestamp'][:10], '%Y-%m-%d').date()
         )
-    with col_ts2:
+
         app_time = st.time_input(
             "Application Time",
-            value=datetime.strptime(st.session_state.current_form['timestamp'], '%Y-%m-%d %H:%M:%S').time() if st.session_state.current_form['timestamp'] else datetime.now().time(),
-            key="app_time_input"
+            value=datetime.strptime(st.session_state.current_form['timestamp'], '%Y-%m-%d %H:%M:%S').time()
         )
-    timestamp_str = f"{app_date.strftime('%Y-%m-%d')} {app_time.strftime('%H:%M:%S')}"
-    st.session_state.current_form['timestamp'] = timestamp_str
 
-    # Profile Section
+        timestamp_str = f"{app_date.strftime('%Y-%m-%d')} {app_time.strftime('%H:%M:%S')}"
+        st.session_state.current_form['timestamp'] = timestamp_str
+
+    # =========== Applicant Profile Section ===========
     st.markdown('<div class="form-section"><h4>📊 Applicant Profile</h4></div>', unsafe_allow_html=True)
 
     col_p1, col_p2, col_p3 = st.columns(3)
@@ -334,9 +208,8 @@ with col1:
             "Age (years) *",
             min_value=18,
             max_value=100,
-            value=st.session_state.current_form['age'] or 30,
-            key="age_input",
-            help="Applicant's current age in years"
+            value=st.session_state.current_form['age'],
+            key="age"
         )
         st.session_state.current_form['age'] = age
 
@@ -345,9 +218,8 @@ with col1:
             "Annual Income ($) *",
             min_value=0,
             step=5000,
-            value=st.session_state.current_form['income'] or 50000,
-            key="income_input",
-            help="Gross annual income of the applicant"
+            value=st.session_state.current_form['income'],
+            key="income"
         )
         st.session_state.current_form['income'] = income
 
@@ -357,418 +229,175 @@ with col1:
             options=["", "Salaried", "Self-Employed", "Freelancer", "Business Owner"],
             index=0 if not st.session_state.current_form['employment_type'] else
                   ["", "Salaried", "Self-Employed", "Freelancer", "Business Owner"].index(st.session_state.current_form['employment_type']),
-            key="employment_input",
-            help="Type of employment"
+            key="employment_type"
         )
         st.session_state.current_form['employment_type'] = employment_type
 
-    # Credit & Loan Section
+    # =========== Credit & Loan Details Section ===========
     st.markdown('<div class="form-section"><h4>💰 Credit & Loan Details</h4></div>', unsafe_allow_html=True)
 
-    col_c1, col_c2 = st.columns(2)
+    col_c1, col_c2, col_c3 = st.columns(3)
 
     with col_c1:
         credit_score = st.number_input(
             "Credit Score *",
             min_value=300,
             max_value=850,
-            value=st.session_state.current_form['credit_score'] or 700,
-            key="credit_input",
-            help="Applicant's credit score (300-850)"
+            value=st.session_state.current_form['credit_score'],
+            key="credit_score"
         )
         st.session_state.current_form['credit_score'] = credit_score
 
-    with col_c2:
-        st.markdown("**Credit Score Range**")
+        # Credit score indicator
         if credit_score >= 750:
-            st.success("Excellent (750+)")
+            st.success("✅ Excellent (750+)")
         elif credit_score >= 700:
-            st.info("Good (700-749)")
+            st.info("ℹ️ Good (700-749)")
         elif credit_score >= 650:
-            st.warning("Fair (650-699)")
+            st.warning("⚠️ Fair (650-699)")
         else:
-            st.error("Poor (<650)")
+            st.error("❌ Poor (<650)")
 
-    # Loan Details
-    col_l1, col_l2 = st.columns(2)
-
-    with col_l1:
+    with col_c2:
         loan_amount = st.number_input(
             "Loan Amount ($) *",
             min_value=1000,
             step=5000,
-            value=st.session_state.current_form['loan_amount'] or 100000,
-            key="loan_amount_input",
-            help="Total loan amount requested"
+            value=st.session_state.current_form['loan_amount'],
+            key="loan_amount"
         )
         st.session_state.current_form['loan_amount'] = loan_amount
 
-    with col_l2:
+    with col_c3:
         tenure = st.number_input(
             "Loan Tenure (months) *",
             min_value=3,
             max_value=360,
-            value=st.session_state.current_form['tenure'] or 60,
-            key="tenure_input",
-            help="Loan repayment period in months (3-360)"
+            value=st.session_state.current_form['tenure'],
+            key="tenure"
         )
         st.session_state.current_form['tenure'] = tenure
 
-    # Monthly Payment Calculation
-    if tenure > 0:
-        monthly_payment = loan_amount / tenure
-        st.metric("Estimated Monthly Payment", f"${monthly_payment:,.2f}", help="Approximate monthly payment amount")
+        # Monthly payment calculation
+        if tenure > 0:
+            monthly_payment = loan_amount / tenure
+            st.metric("Monthly Payment", f"${monthly_payment:,.2f}")
 
-    # Liabilities Section
+    # =========== Financial Obligations Section ===========
     st.markdown('<div class="form-section"><h4>📈 Financial Obligations</h4></div>', unsafe_allow_html=True)
 
     liabilities = st.number_input(
         "Existing Liabilities ($) *",
         min_value=0,
         step=1000,
-        value=st.session_state.current_form['liabilities'] or 0,
-        key="liabilities_input",
-        help="Total existing debts (credit cards, auto loans, mortgage, etc.)"
+        value=st.session_state.current_form['liabilities'],
+        key="liabilities"
     )
     st.session_state.current_form['liabilities'] = liabilities
 
-    # Financial Summary
-    st.markdown("**Financial Summary**")
-    fin_col1, fin_col2, fin_col3 = st.columns(3)
+    # Financial summary
+    st.markdown("**Financial Metrics:**")
+    col_f1, col_f2, col_f3 = st.columns(3)
 
-    with fin_col1:
+    with col_f1:
         total_debt = liabilities + loan_amount
-        st.metric("Total Debt (with loan)", f"${total_debt:,.0f}", help="Existing liabilities + new loan")
+        st.metric("Total Debt", f"${total_debt:,.0f}")
 
-    with fin_col2:
+    with col_f2:
         dti = ((liabilities + loan_amount) / max(income, 1)) * 100
-        st.metric("Debt-to-Income Ratio", f"{dti:.1f}%", help="Should be <43% for approval")
+        st.metric("Debt-to-Income", f"{dti:.1f}%")
 
-    with fin_col3:
+    with col_f3:
         lti = (loan_amount / max(income, 1)) * 100
-        st.metric("Loan-to-Income Ratio", f"{lti:.1f}%", help="Loan as % of annual income")
+        st.metric("Loan-to-Income", f"{lti:.1f}%")
 
-    # Form Summary/Validation Display
+    # =========== Application Summary ===========
     st.markdown('<div class="form-section"><h4>✓ Application Summary</h4></div>', unsafe_allow_html=True)
 
     summary_col1, summary_col2, summary_col3 = st.columns(3)
 
     with summary_col1:
         st.markdown("**Personal Information**")
-        st.write(f"🆔 **ID**: {applicant_id if applicant_id else '⚠️ Required'}")
-        st.write(f"📍 **Location**: {location if location else '⚠️ Required'}")
-        st.write(f"👤 **Age**: {age} years")
-        st.write(f"💼 **Employment**: {employment_type if employment_type else '⚠️ Required'}")
+        st.write(f"🆔 ID: {applicant_id if applicant_id else '⚠️ Required'}")
+        st.write(f"📍 Location: {location if location else '⚠️ Required'}")
+        st.write(f"👤 Age: {age} years")
+        st.write(f"💼 Employment: {employment_type if employment_type else '⚠️ Required'}")
 
     with summary_col2:
         st.markdown("**Loan Information**")
-        st.write(f"💰 **Loan Amount**: ${loan_amount:,.0f}")
-        st.write(f"📅 **Tenure**: {tenure} months")
+        st.write(f"💰 Loan Amount: ${loan_amount:,.0f}")
+        st.write(f"📅 Tenure: {tenure} months")
         if tenure > 0:
-            st.write(f"📊 **Monthly Payment**: ${loan_amount/tenure:,.2f}")
-        st.write(f"📆 **Application Date**: {timestamp_str}")
+            st.write(f"📊 Monthly Payment: ${loan_amount/tenure:,.2f}")
+        st.write(f"📆 Application: {timestamp_str}")
 
     with summary_col3:
         st.markdown("**Credit & Financial**")
-        st.write(f"📈 **Credit Score**: {credit_score}")
-        st.write(f"💵 **Annual Income**: ${income:,.0f}")
-        st.write(f"📉 **Existing Liabilities**: ${liabilities:,.0f}")
-        dti_ratio = ((liabilities + loan_amount) / income) * 100
-        st.write(f"⚖️ **DTI Ratio**: {dti_ratio:.1f}%")
+        st.write(f"📈 Credit Score: {credit_score}")
+        st.write(f"💵 Annual Income: ${income:,.0f}")
+        st.write(f"📉 Liabilities: ${liabilities:,.0f}")
+        st.write(f"⚖️ DTI: {dti:.1f}%")
 
-    # Buttons
+    # =========== Buttons ===========
+    st.markdown("---")
     col_btn1, col_btn2, col_btn3 = st.columns(3)
 
     with col_btn1:
         if st.button("✅ Submit Application", use_container_width=True, type="primary"):
             # Validate required fields
-            required_fields = {
-                "Applicant ID": applicant_id,
-                "Age": age,
-                "Annual Income": income,
-                "Employment Type": employment_type,
-                "Credit Score": credit_score,
-                "Loan Amount": loan_amount,
-                "Loan Tenure": tenure,
-                "Location": location
-            }
-
-            missing_fields = [field for field, value in required_fields.items() if not value]
-
-            if missing_fields:
-                st.markdown(
-                    f'<div class="error-message">❌ Please fill in all required fields:<br>• {("<br>• ").join(missing_fields)}</div>',
-                    unsafe_allow_html=True
-                )
+            if not applicant_id or not employment_type or not location:
+                st.error("❌ Please fill in all required fields")
             else:
-                # Prepare API request payload
-                api_request = {
-                    "applicant": {
-                        "applicant_id": applicant_id,
-                        "age": int(age),
-                        "income": float(income),
-                        "employment_type": employment_type,
-                        "location": location
-                    },
-                    "loan_details": {
-                        "credit_score": int(credit_score),
-                        "loan_amount": float(loan_amount),
-                        "tenure": int(tenure),
-                        "liabilities": float(liabilities)
-                    },
-                    "timestamp": timestamp_str
-                }
+                with st.spinner("📤 Submitting application..."):
+                    result = submit_to_api(st.session_state.current_form)
 
-                # Submit to API which inserts into database
-                with st.spinner("📤 Submitting application to server..."):
-                    api_client = st.session_state.api_client
-                    api_response = api_client.submit_application(api_request)
+                    if result['status'] == 'success':
+                        response_data = result['data']
+                        st.session_state.applications.append(st.session_state.current_form.copy())
+                        st.session_state.last_submission = response_data
 
-                if api_response and api_response.get("status") in ["SUBMITTED", "UNDER_REVIEW", "APPROVED", "REJECTED"]:
-                    # Store in session state for history
-                    application = st.session_state.current_form.copy()
-                    st.session_state.applications.append(application)
+                        st.markdown(f"""
+                        <div class="success-message">
+                        ✅ <strong>Application submitted successfully!</strong><br>
+                        Application ID: <strong>{response_data.get('application_id', 'N/A')}</strong><br>
+                        Status: <strong>{response_data.get('status', 'N/A')}</strong><br>
+                        Risk Score: <strong>{response_data.get('risk_assessment', {}).get('risk_score', 'N/A')}</strong>
+                        </div>
+                        """, unsafe_allow_html=True)
 
-                    # Get application details from API response
-                    application_id = api_response.get("application_id", "N/A")
-                    status = api_response.get("status", "SUBMITTED")
-                    risk_score = api_response.get("risk_assessment", {}).get("risk_score", 0)
-                    risk_level = api_response.get("risk_assessment", {}).get("risk_level", "N/A")
-                    dti_ratio = api_response.get("risk_assessment", {}).get("dti_ratio", 0) * 100
+                        st.success("💬 Go to Chatbot UI at http://localhost:8503 and enter your Applicant ID to analyze this application!")
 
-                    # Add to chat history
-                    message = f"New application submitted: {applicant_id} - Loan: ${loan_amount:,.0f}, Credit: {credit_score}, DTI: {dti_ratio:.1f}%"
-                    st.session_state.chat_history.append({
-                        "role": "user",
-                        "message": message,
-                        "timestamp": datetime.now().strftime('%H:%M:%S')
-                    })
-
-                    bot_response = f"""✅ **Application #{application_id} Successfully Submitted!**
-
-**Status**: {status} | **Risk Level**: {risk_level}
-
-**Applicant Details:**
-- ID: {applicant_id}
-- Age: {age} years
-- Location: {location}
-- Employment: {employment_type}
-- Annual Income: ${income:,.0f}
-
-**Loan Details:**
-- Amount: ${loan_amount:,.0f}
-- Tenure: {tenure} months
-- Estimated Monthly Payment: ${loan_amount/tenure:,.2f}
-
-**Credit & Financial Assessment:**
-- Credit Score: {credit_score}
-- Risk Score: {risk_score:.1f}/100
-- Existing Liabilities: ${liabilities:,.0f}
-- Total Debt (with loan): ${liabilities + loan_amount:,.0f}
-- Debt-to-Income Ratio: {dti_ratio:.1f}%
-
-📊 **Your application has been saved to the database and is now under review.**
-Expected decision time: **2-3 business days**.
-You can check the status using the search feature with your Applicant ID: **{applicant_id}**"""
-
-                    st.session_state.chat_history.append({
-                        "role": "bot",
-                        "message": bot_response,
-                        "timestamp": datetime.now().strftime('%H:%M:%S')
-                    })
-
-                    st.markdown(
-                        f'<div class="success-message">✅ Application submitted successfully!<br>Application ID: <strong>{application_id}</strong><br>Applicant ID: <strong>{applicant_id}</strong><br>Status: <strong>{status}</strong></div>',
-                        unsafe_allow_html=True
-                    )
-
-                    # Store last application in session state
-                    st.session_state.last_application = {
-                        "application_id": application_id,
-                        "applicant_id": applicant_id,
-                        "status": status,
-                        "risk_score": risk_score,
-                        "risk_level": risk_level
-                    }
-
-                    st.rerun()
-                else:
-                    error_msg = api_response.get("detail", "Unknown error") if api_response else "Unable to connect to server"
-                    st.markdown(
-                        f'<div class="error-message">❌ Submission failed: {error_msg}<br>Please ensure the API server is running on http://localhost:8000</div>',
-                        unsafe_allow_html=True
-                    )
+                    else:
+                        st.error(f"❌ Submission failed: {result.get('error', 'Unknown error')}")
 
     with col_btn2:
         if st.button("🔄 Clear Form", use_container_width=True):
             st.session_state.current_form = {
                 'applicant_id': '',
-                'age': None,
-                'income': None,
+                'age': 30,
+                'income': 50000,
                 'employment_type': '',
-                'credit_score': None,
-                'loan_amount': None,
-                'tenure': None,
-                'liabilities': None,
+                'credit_score': 700,
+                'loan_amount': 100000,
+                'tenure': 60,
+                'liabilities': 0,
                 'location': '',
                 'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             }
             st.rerun()
 
     with col_btn3:
-        if st.button("📊 View Applications", use_container_width=True):
-            st.session_state.show_applications = not st.session_state.get('show_applications', False)
+        if st.button("📊 View History", use_container_width=True):
+            st.session_state.show_history = not st.session_state.get('show_history', False)
+            st.rerun()
 
-with col2:
-    st.markdown("### 📈 Quick Summary")
 
-    summary_col1, summary_col2 = st.columns(2)
+def render_history():
+    """Render application history"""
+    if st.session_state.get('show_history', False) and st.session_state.applications:
+        st.markdown("---")
+        st.subheader("📋 Application History")
 
-    with summary_col1:
-        st.metric("Debt-to-Income", f"{(liabilities / max(income, 1) * 100):.1f}%")
-
-    with summary_col2:
-        st.metric("Monthly Payment", f"${(loan_amount / max(tenure, 1)):.2f}")
-
-    st.metric("Loan-to-Income", f"{(loan_amount / max(income, 1) * 100):.1f}%")
-
-    # Risk indicator
-    st.markdown('<div class="form-section"><h4>⚠️ Risk Assessment</h4></div>', unsafe_allow_html=True)
-
-    risk_score = calculate_risk_score(
-        credit_score,
-        liabilities,
-        income,
-        loan_amount,
-        age
-    )
-
-    risk_level, risk_color = get_risk_level(risk_score)
-
-    st.markdown(f"""
-    <div style="background: {risk_color}20; padding: 1rem; border-radius: 8px; border-left: 4px solid {risk_color};">
-        <strong>Risk Level: {risk_level}</strong><br>
-        Score: {risk_score:.1f}/100
-    </div>
-    """, unsafe_allow_html=True)
-
-# Chat Interface
-st.markdown("---")
-st.markdown("### 💬 Application Chat Assistant")
-
-# Info banner
-applicant_id = st.session_state.current_form.get('applicant_id')
-if applicant_id:
-    st.info(f"🔗 **Chat Context**: Using data from Applicant ID: `{applicant_id}` (retrieved from database)")
-else:
-    st.warning("⚠️ **No Applicant ID**: Please submit or load an application first to use the chat assistant")
-
-# Display chat history
-chat_container = st.container()
-
-with chat_container:
-    for msg in st.session_state.chat_history:
-        if msg['role'] == 'user':
-            st.markdown(f"""
-            <div class="chat-message user-message">
-                <strong>You ({msg['timestamp']}):</strong><br>
-                {msg['message']}
-            </div>
-            """, unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div class="chat-message bot-message">
-                <strong>🤖 Loan Assistant ({msg['timestamp']}):</strong><br>
-                {msg['message']}
-            </div>
-            """, unsafe_allow_html=True)
-
-# Chat input
-col_chat1, col_chat2 = st.columns([4, 1])
-
-with col_chat1:
-    user_input = st.text_input(
-        "Ask me anything about your application...",
-        placeholder="e.g., What are my chances of approval?",
-        key="chat_input"
-    )
-
-with col_chat2:
-    send_button = st.button("Send", use_container_width=True, key="send_btn")
-
-if send_button and user_input:
-    st.session_state.chat_history.append({
-        "role": "user",
-        "message": user_input,
-        "timestamp": datetime.now().strftime('%H:%M:%S')
-    })
-
-    # Get applicant ID from current form
-    applicant_id = st.session_state.current_form.get('applicant_id')
-
-    # Get data from database if applicant_id exists
-    if applicant_id:
-        try:
-            db_data = get_applicant_data_from_db(applicant_id)
-            if db_data:
-                # Update form data with database values
-                form_data = {
-                    'applicant_id': db_data.get('applicant_id', applicant_id),
-                    'age': db_data.get('age', st.session_state.current_form['age']),
-                    'income': db_data.get('income', st.session_state.current_form['income']),
-                    'employment_type': db_data.get('employment_type', st.session_state.current_form['employment_type']),
-                    'credit_score': db_data.get('credit_score', st.session_state.current_form['credit_score']),
-                    'loan_amount': db_data.get('loan_amount', st.session_state.current_form['loan_amount']),
-                    'tenure': db_data.get('tenure_months', st.session_state.current_form['tenure']),
-                    'liabilities': db_data.get('existing_liabilities', st.session_state.current_form['liabilities']),
-                    'location': db_data.get('location', st.session_state.current_form['location']),
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-            else:
-                form_data = st.session_state.current_form
-        except Exception as e:
-            st.warning(f"⚠️ Error retrieving data: {str(e)}")
-            form_data = st.session_state.current_form
-    else:
-        form_data = st.session_state.current_form
-
-    # Calculate risk score with available data
-    credit_score = form_data.get('credit_score') or 700
-    liabilities = form_data.get('liabilities') or 0
-    income = form_data.get('income') or 50000
-    loan_amount = form_data.get('loan_amount') or 100000
-    age = form_data.get('age') or 35
-
-    risk_score = calculate_risk_score(
-        credit_score,
-        liabilities,
-        income,
-        loan_amount,
-        age
-    )
-
-    # Generate bot response based on input with database retrieval
-    bot_response = generate_bot_response(
-        user_input,
-        form_data,
-        risk_score,
-        applicant_id=applicant_id
-    )
-
-    st.session_state.chat_history.append({
-        "role": "bot",
-        "message": bot_response,
-        "timestamp": datetime.now().strftime('%H:%M:%S')
-    })
-
-    st.rerun()
-
-# Applications History
-if st.session_state.get('show_applications', False):
-    st.markdown("---")
-    st.markdown("### 📋 Application History")
-
-    if st.session_state.applications:
         df_apps = pd.DataFrame(st.session_state.applications)
         display_df = df_apps[['applicant_id', 'age', 'income', 'credit_score', 'loan_amount', 'tenure', 'location', 'timestamp']].copy()
         display_df.columns = ['Applicant ID', 'Age', 'Income', 'Credit Score', 'Loan Amount', 'Tenure (mo)', 'Location', 'Timestamp']
@@ -783,189 +412,107 @@ if st.session_state.get('show_applications', False):
             file_name=f"applications_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
             mime="text/csv"
         )
-    else:
-        st.info("No applications submitted yet.")
 
 
-# Search Section
-st.markdown("---")
-st.markdown("### 🔍 Search & Retrieve Applicants")
+def render_instructions():
+    """Render instructions"""
+    with st.sidebar:
+        st.header("📖 Instructions")
 
-search_tab1, search_tab2 = st.tabs(["Search Applicants", "Database Statistics"])
+        with st.expander("How to Submit Application", expanded=False):
+            st.markdown("""
+            ### Steps to Submit:
+            1. **Fill Required Fields** (*):
+               - Applicant ID (format: APP-2024-001001)
+               - Age (18-100)
+               - Annual Income
+               - Employment Type
+               - Credit Score (300-850)
+               - Loan Amount
+               - Tenure (3-360 months)
+               - Location
 
-with search_tab1:
-    st.markdown("#### Search Criteria")
+            2. **Review Summary**:
+               - Check all details before submitting
+               - Financial metrics are calculated automatically
 
-    search_col1, search_col2 = st.columns(2)
+            3. **Submit Application**:
+               - Click "✅ Submit Application"
+               - Application is saved to database
 
-    with search_col1:
-        search_applicant_id = st.text_input(
-            "Applicant ID",
-            placeholder="e.g., APP-2024-001",
-            key="search_app_id"
-        )
-        search_location = st.text_input(
-            "Location",
-            placeholder="e.g., New York",
-            key="search_location"
-        )
-        search_employment = st.selectbox(
-            "Employment Type",
-            options=["", "Salaried", "Self-Employed", "Freelancer", "Business Owner"],
-            key="search_employment"
-        )
+            4. **Analyze in Chatbot**:
+               - Go to http://localhost:8503
+               - Enter your Applicant ID
+               - Click "Analyze Application"
+               - View comprehensive agent analysis
 
-    with search_col2:
-        search_age_min = st.number_input(
-            "Min Age",
-            min_value=18,
-            max_value=100,
-            value=18,
-            key="search_age_min"
-        )
-        search_age_max = st.number_input(
-            "Max Age",
-            min_value=18,
-            max_value=100,
-            value=100,
-            key="search_age_max"
-        )
-        search_credit_min = st.number_input(
-            "Min Credit Score",
-            min_value=300,
-            max_value=850,
-            value=300,
-            key="search_credit_min"
-        )
+            ### Tips:
+            - All fields marked with * are required
+            - Credit score range: 300-850
+            - DTI should ideally be < 43%
+            - Monthly payment is auto-calculated
+            """)
 
-    search_status = st.selectbox(
-        "Application Status",
-        options=["", "SUBMITTED", "UNDER_REVIEW", "APPROVED", "REJECTED", "PENDING_DOCUMENTS"],
-        key="search_status"
-    )
+        with st.expander("About This Form", expanded=False):
+            st.markdown("""
+            This form collects comprehensive loan application information:
 
-    search_btn_col1, search_btn_col2, search_btn_col3 = st.columns(3)
+            **Applicant Profile**:
+            - Personal demographics
+            - Income information
+            - Employment details
 
-    with search_btn_col1:
-        if st.button("🔎 Search", use_container_width=True, type="primary"):
-            with st.spinner("Searching..."):
-                api_client = st.session_state.api_client
+            **Loan Details**:
+            - Requested loan amount
+            - Repayment tenure
+            - Credit score
 
-                search_params = {}
-                if search_applicant_id:
-                    search_params['applicant_id'] = search_applicant_id
-                if search_location:
-                    search_params['location'] = search_location
-                if search_employment:
-                    search_params['employment_type'] = search_employment
-                if search_age_min > 18:
-                    search_params['age_min'] = search_age_min
-                if search_age_max < 100:
-                    search_params['age_max'] = search_age_max
-                if search_credit_min > 300:
-                    search_params['credit_score_min'] = search_credit_min
-                if search_status:
-                    search_params['application_status'] = search_status
+            **Financial Status**:
+            - Existing liabilities
+            - Debt-to-income ratio
+            - Loan-to-income ratio
 
-                if not search_params:
-                    st.warning("⚠️  Please enter at least one search criterion")
-                else:
-                    results = api_client.search_applicants(**search_params)
+            All data is validated and persisted to the database via FastAPI backend.
+            """)
 
-                    if results and results.get('data'):
-                        st.session_state.search_results = results['data']
-                        st.success(f"✅ Found {results.get('count', 0)} applicant(s)")
+        with st.expander("System Status", expanded=False):
+            st.subheader("🔍 Service Health")
+
+            col1, col2 = st.columns(2)
+
+            with col1:
+                try:
+                    response = requests.get(f"{API_BASE_URL}/health", timeout=2)
+                    if response.status_code == 200:
+                        st.success("✅ API Server")
                     else:
-                        st.session_state.search_results = []
-                        st.info("No applicants found matching your criteria")
+                        st.error("❌ API Server")
+                except:
+                    st.error("❌ API Server")
 
-    with search_btn_col2:
-        if st.button("📋 List All", use_container_width=True):
-            with st.spinner("Loading..."):
-                api_client = st.session_state.api_client
-                results = api_client.list_all_applicants(page=1, limit=100)
+            with col2:
+                st.info("💾 Database")
 
-                if results and results.get('data'):
-                    st.session_state.search_results = results['data']
-                    st.success(f"✅ Loaded {len(results['data'])} applicant(s)")
-                else:
-                    st.session_state.search_results = []
-                    st.info("No applicants in database")
+        st.markdown("---")
+        st.markdown("### 🔗 Quick Links")
+        st.markdown("""
+        - [Chatbot UI](http://localhost:8503)
+        - [API Status](http://localhost:8000/health)
+        - [GitHub](https://github.com/PradeepMaharana/LoanApprovalSystem)
+        """)
 
-    # Display search results
-    if st.session_state.search_results:
-        st.markdown("#### Search Results")
 
-        df_results = pd.DataFrame(st.session_state.search_results)
-        display_cols = ['applicant_id', 'age', 'income', 'location', 'employment_type',
-                        'credit_score', 'loan_amount', 'application_status']
-        available_cols = [col for col in display_cols if col in df_results.columns]
+# ============================================================================
+# Main Application
+# ============================================================================
 
-        st.dataframe(
-            df_results[available_cols],
-            use_container_width=True,
-            hide_index=True
-        )
+def main():
+    """Main application"""
+    render_header()
+    render_form()
+    render_history()
+    render_instructions()
 
-        # Load applicant to form for editing
-        st.markdown("#### Load to Form")
-        selected_app_id = st.selectbox(
-            "Select applicant to load into form",
-            options=[row['applicant_id'] for row in st.session_state.search_results],
-            key="load_app_select"
-        )
 
-        if st.button("📝 Load to Form", use_container_width=True):
-            selected_row = next(
-                (row for row in st.session_state.search_results if row['applicant_id'] == selected_app_id),
-                None
-            )
-            if selected_row:
-                st.session_state.current_form = {
-                    'applicant_id': selected_row.get('applicant_id', ''),
-                    'age': selected_row.get('age'),
-                    'income': selected_row.get('income'),
-                    'employment_type': selected_row.get('employment_type', ''),
-                    'credit_score': selected_row.get('credit_score'),
-                    'loan_amount': selected_row.get('loan_amount'),
-                    'tenure': None,
-                    'liabilities': selected_row.get('existing_liabilities', 0),
-                    'location': selected_row.get('location', ''),
-                    'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                }
-                st.success(f"✅ Loaded {selected_app_id} - Scroll up to edit and submit")
-                st.rerun()
-
-with search_tab2:
-    st.markdown("#### Database Statistics")
-
-    if st.button("📊 Refresh Statistics", use_container_width=True):
-        with st.spinner("Loading statistics..."):
-            api_client = st.session_state.api_client
-            stats = api_client.get_statistics()
-
-            if stats:
-                col1, col2, col3 = st.columns(3)
-
-                with col1:
-                    st.metric("Total Applicants", stats.get('total_applicants', 0))
-
-                with col2:
-                    st.metric("Total Applications", stats.get('total_applications', 0))
-
-                with col3:
-                    st.metric("Session Applications", len(st.session_state.applications))
-
-                st.markdown("##### Applications by Status")
-                if stats.get('applications_by_status'):
-                    status_data = stats['applications_by_status']
-                    status_df = pd.DataFrame(list(status_data.items()), columns=['Status', 'Count'])
-                    st.bar_chart(status_df.set_index('Status'))
-
-                st.markdown("##### Applicants by Employment Type")
-                if stats.get('applicants_by_employment'):
-                    emp_data = stats['applicants_by_employment']
-                    emp_df = pd.DataFrame(list(emp_data.items()), columns=['Employment Type', 'Count'])
-                    st.bar_chart(emp_df.set_index('Employment Type'))
-            else:
-                st.error("❌ Failed to load statistics")
+if __name__ == "__main__":
+    main()
