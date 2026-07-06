@@ -338,7 +338,7 @@ def render_sidebar():
         )
 
         # Analyze Button
-        if st.button("🔍 Analyze Application", use_container_width=True, type="primary"):
+        if st.button("🔍 Search", use_container_width=True, type="primary"):
             if applicant_id.strip():
                 with st.spinner("🔄 Analyzing application..."):
                     analysis = get_agent_analysis(applicant_id.strip())
@@ -416,8 +416,6 @@ def render_sidebar():
         st.subheader("🔗 Quick Links")
         st.markdown("""
         - 🏦 [Loan Form](http://localhost:8501)
-        - 📊 [API Status](http://localhost:8000/health)
-        - 📖 [Documentation](https://github.com/PradeepMaharana/LoanApprovalSystem)
         """)
 
 

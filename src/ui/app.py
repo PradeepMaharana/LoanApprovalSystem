@@ -441,7 +441,7 @@ def render_instructions():
                - Application is saved to database
 
             4. **Analyze in Chatbot**:
-               - Go to http://localhost:8503
+               - Go to http://localhost:8504
                - Enter your Applicant ID
                - Click "Analyze Application"
                - View comprehensive agent analysis
@@ -475,31 +475,11 @@ def render_instructions():
             All data is validated and persisted to the database via FastAPI backend.
             """)
 
-        with st.expander("System Status", expanded=False):
-            st.subheader("🔍 Service Health")
-
-            col1, col2 = st.columns(2)
-
-            with col1:
-                try:
-                    response = requests.get(f"{API_BASE_URL}/health", timeout=2)
-                    if response.status_code == 200:
-                        st.success("✅ API Server")
-                    else:
-                        st.error("❌ API Server")
-                except:
-                    st.error("❌ API Server")
-
-            with col2:
-                st.info("💾 Database")
 
         st.markdown("---")
         st.markdown("### 🔗 Quick Links")
         st.markdown("""
-        - [Chatbot UI](http://localhost:8503)
-        - [API Status](http://localhost:8000/health)
-        - [GitHub](https://github.com/PradeepMaharana/LoanApprovalSystem)
-        """)
+        - [Chatbot UI](http://localhost:8504)        """)
 
 
 # ============================================================================
