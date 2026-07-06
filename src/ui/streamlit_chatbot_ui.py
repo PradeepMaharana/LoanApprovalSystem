@@ -325,13 +325,16 @@ def render_header():
 def render_sidebar():
     """Render sidebar with controls"""
     with st.sidebar:
-        st.header("🎮 Controls")
+        st.header("🎮 Chatbot Controls")
+
+        st.markdown("### 📥 Fetch & Analyze")
 
         # Applicant ID Input
         applicant_id = st.text_input(
             "Enter Applicant ID",
-            placeholder="APP-2024-001",
-            key="applicant_id_input"
+            placeholder="APP-2024-001001",
+            key="applicant_id_input",
+            help="Enter the Applicant ID from a submitted loan application"
         )
 
         # Analyze Button
@@ -346,28 +349,59 @@ def render_sidebar():
                         st.success("✅ Analysis complete!")
                         st.rerun()
                     else:
-                        st.error(f"❌ {analysis.get('error', 'Analysis failed')}")
+                        error_msg = analysis.get('error', 'Analysis failed')
+                        st.error(f"❌ {error_msg}")
+
+                        # Provide helpful suggestions
+                        if "not found" in error_msg.lower():
+                            st.info("💡 **Tip**: Make sure you've submitted the application through the Loan Form at http://localhost:8501")
+                        elif "connect" in error_msg.lower():
+                            st.warning("⚠️ **API Server**: Make sure the API is running on http://localhost:8000")
             else:
                 st.warning("⚠️ Please enter an Applicant ID")
 
         st.divider()
 
         # Display Stats
-        st.subheader("📊 Analysis Stats")
+        st.subheader("📊 Current Analysis")
         if st.session_state.agent_analysis:
-            decision = st.session_state.agent_analysis.get('decision', {})
-            st.metric("Classification", decision.get('classification', 'N/A'))
-            st.metric("Risk Score", f"{decision.get('risk_score', 'N/A')}/100")
-            st.metric("Confidence", f"{decision.get('confidence_level', 'N/A')}%")
+            try:
+                decision = st.session_state.agent_analysis.get('decision', {})
+                classification = decision.get('classification', 'N/A')
+                risk_score = decision.get('risk_score', 'N/A')
+                confidence = decision.get('confidence_level', 'N/A')
+
+                # Color-coded classification metric
+                if classification == 'APPROVE':
+                    st.metric("✅ Classification", classification)
+                elif classification == 'REJECT':
+                    st.metric("❌ Classification", classification)
+                else:
+                    st.metric("⏳ Classification", classification)
+
+                st.metric("📊 Risk Score", f"{risk_score}/100" if risk_score != 'N/A' else risk_score)
+                st.metric("💯 Confidence", f"{confidence}%" if confidence != 'N/A' else confidence)
+
+                # Applicant info
+                st.divider()
+                profile = st.session_state.agent_analysis.get('applicant_profile', {})
+                applicant_id_display = st.session_state.applicant_id or profile.get('applicant_id', 'Unknown')
+                st.caption(f"📌 Applicant ID: {applicant_id_display}")
+
+            except Exception as e:
+                st.error(f"Error displaying stats: {str(e)}")
         else:
-            st.info("No analysis loaded yet")
+            st.info("No analysis loaded yet\n\nEnter an Applicant ID above to get started")
 
         st.divider()
 
-        # Raw JSON Toggle
+        # Options
+        st.subheader("⚙️ Options")
+
         st.session_state.show_raw_json = st.checkbox(
             "📋 Show Raw JSON",
-            value=st.session_state.show_raw_json
+            value=st.session_state.show_raw_json,
+            help="Display the complete JSON response from agents"
         )
 
         # Clear Button
@@ -376,40 +410,89 @@ def render_sidebar():
             st.session_state.applicant_id = None
             st.rerun()
 
+        st.divider()
+
+        # Quick Links
+        st.subheader("🔗 Quick Links")
+        st.markdown("""
+        - 🏦 [Loan Form](http://localhost:8501)
+        - 📊 [API Status](http://localhost:8000/health)
+        - 📖 [Documentation](https://github.com/PradeepMaharana/LoanApprovalSystem)
+        """)
+
 
 def render_main_content():
     """Render main content area"""
 
     if not st.session_state.agent_analysis:
-        st.info("👈 Enter an Applicant ID in the sidebar to analyze their application")
+        # Main welcome message
+        st.markdown("""
+        <div style="text-align: center; padding: 3rem 0;">
+            <h2>👈 Ready to Analyze</h2>
+            <p style="font-size: 1.1rem; color: #666;">
+                Enter an Applicant ID in the sidebar to analyze their loan application
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
 
         # Display instructions
         with st.expander("📖 How to Use This Tool", expanded=True):
             st.markdown("""
-            ### Steps:
-            1. **Enter Applicant ID** - Use format like `APP-2024-001` (from loan application form)
-            2. **Click "Analyze Application"** - System will:
-               - Fetch applicant profile from database
-               - Run ApplicantProfileAgent for income/employment analysis
-               - Run FinancialRiskAgent for DTI/LTI analysis
-               - Run LoanDecisionAgent for approval decision
-            3. **Review Results** - See comprehensive agent analysis
+            ### 🚀 Getting Started:
 
-            ### Data Displayed:
-            - 👤 **Applicant Profile**: Income Stability Score, Employment Risk, Demographics
-            - 🎯 **Loan Decision**: Classification (Approve/Reject/Review), Risk Score, Confidence
-            - 💰 **Financial Analysis**: DTI, LTI ratios, monthly payment estimate
-            - 📊 **Decision Factors**: Credit score, DTI ratio, income stability, employment risk
-            - ✨ **Recommended Actions**: Next steps based on decision
-            - 📈 **Agent Output**: Raw agent analysis data for transparency
-
-            ### Getting Started:
-            1. Go to main application form at http://localhost:8501
-            2. Fill in and submit a loan application
+            **Step 1: Get an Applicant ID**
+            1. Go to the [Loan Application Form](http://localhost:8501)
+            2. Fill in all required fields and submit
             3. Copy the Applicant ID from the success message
-            4. Return to this chatbot and enter that Applicant ID
-            5. Click "Analyze Application" to see agent analysis
+
+            **Step 2: Analyze in Chatbot**
+            1. Enter the Applicant ID in the sidebar text field
+            2. Click "🔍 Analyze Application" button
+            3. Wait for analysis to complete
+
+            **Step 3: Review Results**
+            The analysis displays across 5 tabs:
+
+            - **Decision**: Approval decision + Risk Score + Confidence + Explanation
+            - **Applicant Profile**: Income Stability Score + Employment Risk Score + Demographics
+            - **Financial**: DTI/LTI Ratios + Monthly Payment
+            - **Decision Factors**: Breakdown of factors used in decision
+            - **Recommended Actions**: Next steps based on decision
+
+            ### ℹ️ About This Tool:
+            This chatbot integrates three specialized agents:
+            - **ApplicantProfileAgent**: Income Stability Score + Employment Risk Score
+            - **FinancialRiskAgent**: DTI + LTI calculations
+            - **LoanDecisionAgent**: Classification + Risk Score + Confidence + Explanation
+
+            ### 💡 Tips:
+            - Check "Show Raw JSON" to see the complete agent response
+            - Use the Quick Links sidebar to navigate to other tools
+            - Refresh the page if you encounter issues
             """)
+
+        # Status check section
+        st.markdown("---")
+        st.subheader("🔍 System Status")
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            try:
+                response = requests.get("http://localhost:8000/health", timeout=2)
+                if response.status_code == 200:
+                    st.success("✅ API Server")
+                else:
+                    st.error("❌ API Server")
+            except:
+                st.error("❌ API Server")
+
+        with col2:
+            st.info("💾 Database")
+
+        with col3:
+            st.success("✅ Chatbot UI")
+
         return
 
     # Display comprehensive analysis
